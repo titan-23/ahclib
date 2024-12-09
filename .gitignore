@@ -1,0 +1,7 @@
+.vscode/
+*.in
+*.out
+
+__pycache__/
+*.py[cod]
+*$py.class
