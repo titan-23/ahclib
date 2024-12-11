@@ -1,3 +1,15 @@
+Metadata-Version: 2.1
+Name: ahctools
+Version: 0.1.0
+Summary: AHCツール
+Author-email: titan23 <titan23.kyopuro@gmail.com>
+License: 特になしAAA
+Project-URL: Homepage, https://github.com/titan-23/ahctools
+Project-URL: Repository, https://github.com/titan-23/ahctools
+Keywords: AtCoder,AHC,heuristic,tools
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+
 # ahctools
 
 AHC並列実行のツールです。

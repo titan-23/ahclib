@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ahctools"
+version = "0.1.0"
+description = "AHCツール"
+authors = [
+    { name = "titan23", email = "titan23.kyopuro@gmail.com" }
+]
+license = { text = "特になし" }
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["AtCoder", "AHC", "heuristic", "tools"]
+
+[project.urls]
+Homepage = "https://github.com/titan-23/ahctools"
+Repository = "https://github.com/titan-23/ahctools"
