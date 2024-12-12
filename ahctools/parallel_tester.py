@@ -32,6 +32,7 @@ class ParallelTester:
 
     def __init__(
         self,
+        filename: str,
         compile_command: str,
         execute_command: str,
         input_file_names: list[str],
@@ -51,6 +52,7 @@ class ParallelTester:
             get_score (Callable[[list[float]], float]): スコアのリストに対して平均などを取って返してください。
             timeout (float): [ms]
         """
+        self.filename = filename
         self.compile_command = compile_command.split()
         self.execute_command = execute_command.split()
         self.input_file_names = input_file_names
@@ -205,7 +207,7 @@ class ParallelTester:
         Returns:
             tuple[str, float]: ファイル名、スコア、state, time
         """
-        input_file, lock = args
+        input_file, lock, record = args
         with open(input_file, "r", encoding="utf-8") as f:
             input_text = "".join(f.read())
 
@@ -244,17 +246,18 @@ class ParallelTester:
                     f"| {cnt} / {len(self.input_file_names)} | {input_file} | {s} | {t} |"
                 )
 
-            # stderr
-            with open(
-                f"{self.output_dir}/err/{filename}", "w", encoding="utf-8"
-            ) as out_f:
-                out_f.write(result.stderr)
+            if record:
+                # stderr
+                with open(
+                    f"{self.output_dir}/err/{filename}", "w", encoding="utf-8"
+                ) as out_f:
+                    out_f.write(result.stderr)
 
-            # stdout
-            with open(
-                f"{self.output_dir}/out/{filename}", "w", encoding="utf-8"
-            ) as out_f:
-                out_f.write(result.stdout)
+                # stdout
+                with open(
+                    f"{self.output_dir}/out/{filename}", "w", encoding="utf-8"
+                ) as out_f:
+                    out_f.write(result.stdout)
 
             return input_file, score, "AC", f"{(end_time-start_time):.3f}"
         except subprocess.TimeoutExpired as e:
@@ -272,19 +275,20 @@ class ParallelTester:
                     f"| {cnt} / {len(self.input_file_names)} | {input_file} | {s} | {to_red(t)} |"
                 )
 
-            # stderr
-            with open(
-                f"{self.output_dir}/err/{filename}", "w", encoding="utf-8"
-            ) as out_f:
-                if e.stderr is not None:
-                    out_f.write(e.stderr.decode("utf-8"))
+            if record:
+                # stderr
+                with open(
+                    f"{self.output_dir}/err/{filename}", "w", encoding="utf-8"
+                ) as out_f:
+                    if e.stderr is not None:
+                        out_f.write(e.stderr.decode("utf-8"))
 
-            # stdout
-            with open(
-                f"{self.output_dir}/out/{filename}", "w", encoding="utf-8"
-            ) as out_f:
-                if e.stdout is not None:
-                    out_f.write(e.stdout.decode("utf-8"))
+                # stdout
+                with open(
+                    f"{self.output_dir}/out/{filename}", "w", encoding="utf-8"
+                ) as out_f:
+                    if e.stdout is not None:
+                        out_f.write(e.stdout.decode("utf-8"))
 
             return input_file, math.nan, "TLE", f"{self.timeout:.3f}"
         except subprocess.CalledProcessError as e:
@@ -301,7 +305,7 @@ class ParallelTester:
             self.counter
             return input_file, math.nan, "INNER_ERROR", "-1"
 
-    def run_record(self) -> list[tuple[str, float]]:
+    def run_record(self, record: bool) -> list[tuple[str, float]]:
         """実行します。"""
         dt_now = datetime.datetime.now()
 
@@ -311,14 +315,20 @@ class ParallelTester:
         self.output_dir += "all_tests/"
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
+        with open(f"{self.output_dir}{self.filename}", "w") as outs:
+            with open(self.filename, "r") as inps:
+                for line in inps:
+                    print(line, file=outs)
 
         self.output_dir += dt_now.strftime("%Y-%m-%d_%H-%M-%S")
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
-        if not os.path.exists(f"{self.output_dir}/err/"):
-            os.makedirs(f"{self.output_dir}/err/")
-        if not os.path.exists(f"{self.output_dir}/out/"):
-            os.makedirs(f"{self.output_dir}/out/")
+
+        if record:
+            if not os.path.exists(f"{self.output_dir}/err/"):
+                os.makedirs(f"{self.output_dir}/err/")
+            if not os.path.exists(f"{self.output_dir}/out/"):
+                os.makedirs(f"{self.output_dir}/out/")
 
         with multiprocessing.Manager() as manager:
             lock = manager.Lock()
@@ -326,7 +336,7 @@ class ParallelTester:
             pool = multiprocessing.Pool(processes=self.cpu_count)
             result = pool.map(
                 self._process_file,
-                [(file, lock) for file in self.input_file_names],
+                [(file, lock, record) for file in self.input_file_names],
                 chunksize=1,
             )
             pool.close()
@@ -342,16 +352,17 @@ class ParallelTester:
             for filename, score, state, t in result:
                 writer.writerow([filename, score, state, t])
 
-        # 出力を`./out/`へも書き出す
-        if not os.path.exists("./out/"):
-            os.makedirs("./out/")
-        for item in os.listdir(f"{self.output_dir}/out/"):
-            src_path = os.path.join(f"{self.output_dir}/out/", item)
-            dest_path = os.path.join("./out/", item)
-            if os.path.isfile(src_path):
-                shutil.copy2(src_path, dest_path)
-            elif os.path.isdir(src_path):
-                shutil.copytree(src_path, dest_path)
+        if record:
+            # 出力を`./out/`へも書き出す
+            if not os.path.exists("./out/"):
+                os.makedirs("./out/")
+            for item in os.listdir(f"{self.output_dir}/out/"):
+                src_path = os.path.join(f"{self.output_dir}/out/", item)
+                dest_path = os.path.join("./out/", item)
+                if os.path.isfile(src_path):
+                    shutil.copy2(src_path, dest_path)
+                elif os.path.isdir(src_path):
+                    shutil.copytree(src_path, dest_path)
 
         return result
 
@@ -391,6 +402,7 @@ def build_tester(
         ParallelTester: テスターです。
     """
     tester = ParallelTester(
+        filename=settings.filename,
         compile_command=settings.compile_command,
         execute_command=settings.execute_command,
         input_file_names=settings.input_file_names,
@@ -403,7 +415,11 @@ def build_tester(
 
 
 def run_test(
-    settings: AHCSettings, njobs: int, verbose: bool = False, compile: bool = False
+    settings: AHCSettings,
+    njobs: int,
+    verbose: bool = False,
+    compile: bool = False,
+    record: bool = True,
 ) -> None:
     tester = build_tester(settings, njobs, verbose)
     logger.info(f"{njobs=}")
@@ -414,7 +430,8 @@ def run_test(
     logger.info("Start.")
 
     start = time.time()
-    scores = tester.run_record()
+
+    scores = tester.run_record(record)
 
     nan_case = []
     for filename, s, state, _ in scores:
@@ -469,7 +486,7 @@ def main():
     """実行時引数をもとに、 ``tester`` を立ち上げ実行します。"""
     args = ParallelTester.get_args()
     njobs = min(AHCSettings.njobs, multiprocessing.cpu_count() - 1)
-    run_test(AHCSettings, njobs, args.verbose, args.compile)
+    run_test(AHCSettings, njobs, args.verbose, args.compile, True)
 
 
 if __name__ == "__main__":

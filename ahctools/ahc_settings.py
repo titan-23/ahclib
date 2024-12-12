@@ -1,29 +1,26 @@
 import optuna
 
 """example
-python3 ./parallel_tester.py -c -v
+python3 -m ahctools test -v -c -r
 
-python3 ./oprimizer.py
+python3 -m opt
+
 g++ ./main.cpp -O2 -std=c++20 -o a.out -I./../../../Library_cpp
 """
 
 
 class AHCSettings:
-    """
-    AHCテスターの設定ファイル
-
-    https://github.com/titan-23/Library_py/tree/main/titan_pylib/ahc/readme.md
-    """
 
     # parallel_tester -------------------- #
     njobs = 127
+    filename = "./main.cpp"
     compile_command = "g++ ./main.cpp -O2 -std=c++20 -o a.out -I./../../../Library_cpp"
     execute_command = "./a.out"
     input_file_names = [f"./in/{str(i).zfill(4)}.txt" for i in range(100)]
     timeout = None
 
     def get_score(scores: list[float]) -> float:
-        return sum(scores) / len(scores) * 100
+        return sum(scores) / len(scores)
 
     # ------------------------------------ #
 
@@ -33,6 +30,7 @@ class AHCSettings:
 
     # direction: minimize / maximize
     direction = "minimize"
+
     # optuna の試行回数
     n_trials = 50
 

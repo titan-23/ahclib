@@ -4,9 +4,34 @@ AHC並列実行のツールです。
 
 ## インストール方法
 
+インストールには以下のコマンドを実行してください。
+
 ```shell
-$ pip install git+https://github.com/titan-23/ahctools
+$ python3 -m pip install git+https://github.com/titan-23/ahctools
 ```
+
+アンインストールするときは以下です。
+
+```shell
+$ python3 -m pip uninstall git+https://github.com/titan-23/ahctools
+```
+
+## 使い方
+
+### 並列実行
+
+以下のコマンドで実行できます。
+```shell
+$ python3 -m ahctools test [-c] [-v] [-r]
+```
+
+コマンドオプション:
+- `-c` コンパイルします。
+- `-v` ログを表示します。
+- `-r` 標準出力と標準エラー出力をファイルに保存します。オプションを指定しない場合、結果を記録したcsvファイルのみを得られます。
+
+### optunaを用いたパラメータ探索
+
 
 
 ## `ahc_settings.py`

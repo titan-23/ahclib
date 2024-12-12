@@ -45,6 +45,13 @@ if __name__ == "__main__":
         action="store_true",
     )
     parser.add_argument(
+        "-r",
+        "--record",
+        required=False,
+        default=False,
+        action="store_true",
+    )
+    parser.add_argument(
         "-w",
         "--wilcoxon",
         required=False,
@@ -66,7 +73,7 @@ if __name__ == "__main__":
             datefmt="%H:%M:%S",
             level=os.getenv("LOG_LEVEL", "INFO"),
         )
-        run_test(settings, settings.njobs, args.verbose, args.compile)
+        run_test(settings, settings.njobs, args.verbose, args.compile, args.record)
     elif args.command == "opt":
         if args.wilcoxon:
             raise NotImplementedError
