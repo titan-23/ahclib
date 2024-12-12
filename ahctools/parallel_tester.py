@@ -7,8 +7,10 @@ import multiprocessing
 import time
 import math
 import os
+from random import Random
 import shutil
 import csv
+import optuna
 from functools import partial
 import datetime
 from .ahc_settings import AHCSettings
@@ -60,6 +62,10 @@ class ParallelTester:
         )
         self.counter: multiprocessing.managers.ValueProxy
 
+        self.rnd = Random()
+        self.should_prune: bool = False
+        self.scores_list: list[float] = []
+
     def show_score(self, scores: list[float]) -> float:
         """スコアのリストを受け取り、 ``get_score`` 関数で計算します。
         ついでに表示もします。
@@ -83,6 +89,71 @@ class ParallelTester:
             text=True,
             check=True,
         )
+
+    def _process_file_opt_wilcoxon(self, args) -> float:
+        if self.should_prune:
+            # raise optuna.TrialPruned()
+            return None
+        input_file, id_, lock, trial = args
+        trial: optuna.trial.Trial
+        with open(input_file, "r", encoding="utf-8") as f:
+            input_text = "".join(f.read())
+        try:
+            result = subprocess.run(
+                self.execute_command,
+                stderr=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                input=input_text,
+                timeout=self.timeout,
+                text=True,
+                check=True,
+            )
+            with lock:
+                if self.should_prune:
+                    return None
+                score_line = result.stderr.rstrip().split("\n")[-1]
+                _, score = score_line.split(" = ")
+                score = float(score)
+                trial.report(score, id_)
+                if trial.should_prune():
+                    # raise optuna.TrialPruned()
+                    self.should_prune = True
+                    return None
+            return score
+        except subprocess.TimeoutExpired as e:
+            logger.error(to_red(f"TLE occured in {input_file}"))
+            return math.nan
+        except subprocess.CalledProcessError as e:
+            logger.error(to_red(f"Error occured in {input_file}"))
+            return math.nan
+        except Exception as e:
+            logger.exception(e)
+            logger.error(to_red(f"!!! Error occured in {input_file}"))
+            return math.nan
+
+    def run_opt_wilcoxon(self, trial: optuna.trial.Trial) -> list[float]:
+        self.should_prune: bool = False
+        self.scores_list: list[float] = []
+
+        input_filenames = list(enumerate(self.input_file_names))
+        print(len(input_filenames))
+        self.rnd.shuffle(input_filenames)
+        with multiprocessing.Manager() as manager:
+            lock = manager.Lock()
+            self.counter = manager.Value("i", 0)
+            pool = multiprocessing.Pool(processes=self.cpu_count)
+            result = pool.map(
+                self._process_file_opt_wilcoxon,
+                [(file, id_, lock, trial) for id_, file in input_filenames],
+                chunksize=1,
+            )
+            pool.close()
+            pool.join()
+        assert None not in result
+        if None in result:
+            result = [s for s in result if s is not None]
+            return result, False
+        return result, True
 
     def _process_file_light(self, input_file: str) -> float:
         """入力`input_file`を処理します。
@@ -234,9 +305,13 @@ class ParallelTester:
         """実行します。"""
         dt_now = datetime.datetime.now()
 
-        self.output_dir = "./alltests/"
+        self.output_dir = "./ahctools_results/"
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
+        self.output_dir += "all_tests/"
+        if not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir)
+
         self.output_dir += dt_now.strftime("%Y-%m-%d_%H-%M-%S")
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
@@ -304,11 +379,12 @@ class ParallelTester:
 
 
 def build_tester(
-    settings: AHCSettings, verbose: bool = False
+    settings: AHCSettings, njobs: int, verbose: bool = False
 ) -> ParallelTester:
     """`ParallelTester` を返します
 
     Args:
+        settings (AHCSettings):
         verbose (bool, optional): ログを表示します。
 
     Returns:
@@ -318,7 +394,7 @@ def build_tester(
         compile_command=settings.compile_command,
         execute_command=settings.execute_command,
         input_file_names=settings.input_file_names,
-        cpu_count=min(AHCSettings.njobs, multiprocessing.cpu_count() - 1),
+        cpu_count=min(njobs, multiprocessing.cpu_count() - 1),
         verbose=verbose,
         get_score=settings.get_score,
         timeout=settings.timeout,
@@ -326,15 +402,13 @@ def build_tester(
     return tester
 
 
-def main():
-    """実行時引数をもとに、 ``tester`` を立ち上げ実行します。"""
-    args = ParallelTester.get_args()
-    njobs = min(AHCSettings.njobs, multiprocessing.cpu_count() - 1)
+def run_test(
+    settings: AHCSettings, njobs: int, verbose: bool = False, compile: bool = False
+) -> None:
+    tester = build_tester(settings, njobs, verbose)
     logger.info(f"{njobs=}")
 
-    tester = build_tester(AHCSettings, args.verbose)
-
-    if args.compile:
+    if compile:
         tester.compile()
 
     logger.info("Start.")
@@ -389,6 +463,13 @@ def main():
     score = tester.show_score([s for _, s, _, _ in scores])
     logger.info(to_green(f"Finished in {time.time() - start:.4f} sec."))
     return score
+
+
+def main():
+    """実行時引数をもとに、 ``tester`` を立ち上げ実行します。"""
+    args = ParallelTester.get_args()
+    njobs = min(AHCSettings.njobs, multiprocessing.cpu_count() - 1)
+    run_test(AHCSettings, njobs, args.verbose, args.compile)
 
 
 if __name__ == "__main__":

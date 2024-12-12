@@ -3,31 +3,11 @@ import time
 from logging import getLogger, basicConfig
 import os
 import multiprocessing
-from parallel_tester import ParallelTester, build_tester
-from ahc_settings import AHCSettings
+from .parallel_tester import ParallelTester, build_tester
+from .ahc_settings import AHCSettings
+from .ahc_util import to_green, to_red, to_blue, to_bold
 
 logger = getLogger(__name__)
-basicConfig(
-    format="%(asctime)s [%(levelname)s] : %(message)s",
-    datefmt="%H:%M:%S",
-    level=os.getenv("LOG_LEVEL", "INFO"),
-)
-
-
-def to_red(arg):
-    return f"\u001b[31m{arg}\u001b[0m"
-
-
-def to_blue(arg):
-    return f"\u001b[94m{arg}\u001b[0m"
-
-
-def to_green(arg):
-    return f"\u001b[32m{arg}\u001b[0m"
-
-
-def to_bold(arg):
-    return f"\u001b[1m{arg}\u001b[0m"
 
 
 class Optimizer:
@@ -38,19 +18,59 @@ class Optimizer:
         logger.info(to_blue(f"Optimizer settings:"))
         logger.info(f"- study_name : {to_bold(settings.study_name)}")
         logger.info(f"- direction  : {to_bold(settings.direction)}")
-        logger.info(f"- n_trials   : {to_bold(settings.n_trials)}")
+        logger.info(f"- ntrials    : {to_bold(settings.ntrials)}")
         logger.info(f"------------------------------------------")
-        self.path = f"./optimizer_results/{self.settings.study_name}"
-
-    def optimize(self) -> None:
+        self.path = f"./ahctools_results/optimizer_results/{self.settings.study_name}"
         if not os.path.exists(self.path):
             os.makedirs(self.path)
 
+    def optimize_wilcoxon(self) -> None:
+        raise NotImplementedError
         tester: ParallelTester = build_tester(
-            self.settings, njobs=self.settings.n_jobs_parallel_tester
+            self.settings, njobs=self.settings.njobs_parallel_tester, verbose=False
         )
         tester.compile()
+        start = time.time()
 
+        study: optuna.Study = optuna.create_study(
+            direction=self.settings.direction,
+            study_name=self.settings.study_name,
+            storage=f"sqlite:///{self.path}/{self.settings.study_name}.db",
+            load_if_exists=True,
+            pruner=optuna.pruners.WilcoxonPruner(p_threshold=0.1),
+        )
+
+        def _objective(trial: optuna.trial.Trial) -> float:
+            tester: ParallelTester = build_tester(
+                self.settings,
+                njobs=self.settings.njobs_parallel_tester,
+                verbose=False,
+            )
+            args = self.settings.objective(trial)
+            tester.append_execute_command(args)
+            scores, state = tester.run_opt_wilcoxon(trial)
+            if not state:
+                print("Pruned!")
+                raise optuna.TrialPruned()
+            score = tester.get_score(scores)
+            return score
+
+        study.optimize(
+            _objective,
+            n_trials=self.settings.ntrials,
+            n_jobs=min(self.settings.njobs_optuna, multiprocessing.cpu_count() - 1),
+        )
+
+        logger.info(study.best_trial)
+        logger.info("writing results ...")
+        self.output(study)
+        logger.info(f"Finish parameter seraching. Time: {time.time() - start:.2f}sec.")
+
+    def optimize(self) -> None:
+        tester: ParallelTester = build_tester(
+            self.settings, njobs=self.settings.njobs_parallel_tester, verbose=False
+        )
+        tester.compile()
         start = time.time()
 
         study: optuna.Study = optuna.create_study(
@@ -62,7 +82,9 @@ class Optimizer:
 
         def _objective(trial: optuna.trial.Trial) -> float:
             tester: ParallelTester = build_tester(
-                self.settings
+                self.settings,
+                njobs=self.settings.njobs_parallel_tester,
+                verbose=False,
             )
             args = self.settings.objective(trial)
             tester.append_execute_command(args)
@@ -72,8 +94,8 @@ class Optimizer:
 
         study.optimize(
             _objective,
-            n_trials=self.settings.n_trials,
-            n_jobs=min(self.settings.n_jobs_optuna, multiprocessing.cpu_count() - 1),
+            n_trials=self.settings.ntrials,
+            n_jobs=min(self.settings.njobs_optuna, multiprocessing.cpu_count() - 1),
         )
 
         logger.info(study.best_trial)
@@ -108,6 +130,27 @@ class Optimizer:
         fig.write_image(f"{img_path}/slice.png")
 
 
-if __name__ == "__main__":
-    optimizer: Optimizer = Optimizer(AHCSettings)
+def run_optimizer(settings: AHCSettings):
+    basicConfig(
+        format="%(asctime)s [%(levelname)s] : %(message)s",
+        datefmt="%H:%M:%S",
+        level=os.getenv("LOG_LEVEL", "INFO"),
+    )
+
+    optimizer: Optimizer = Optimizer(settings)
     optimizer.optimize()
+
+
+def run_optimizer_wilcoxon(settings: AHCSettings):
+    basicConfig(
+        format="%(asctime)s [%(levelname)s] : %(message)s",
+        datefmt="%H:%M:%S",
+        level=os.getenv("LOG_LEVEL", "INFO"),
+    )
+
+    optimizer: Optimizer = Optimizer(settings)
+    optimizer.optimize_wilcoxon()
+
+
+if __name__ == "__main__":
+    run_optimizer(AHCSettings)
