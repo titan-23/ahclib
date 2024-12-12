@@ -3,6 +3,7 @@ from .optimizer import run_optimizer, run_optimizer_wilcoxon
 import sys
 import importlib.util
 import argparse
+import shutil
 from logging import basicConfig
 import os
 
@@ -60,14 +61,29 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
+    if args.command == "setup":
+        print("setup")
+        module_dir = os.path.dirname(os.path.abspath(__file__))
+        source_file = os.path.join(module_dir, "ahc_settings.py")
+        caller_dir = os.getcwd()
+        destination_file = os.path.join(caller_dir, "ahc_settings.py")
+        try:
+            shutil.copy(source_file, destination_file)
+            print(f"Copied {source_file} to {destination_file}")
+        except FileNotFoundError:
+            print(f"Error: {source_file} does not exist.")
+            sys.exit(1)
+        except Exception as e:
+            print(f"Error: {e}")
+            sys.exit(1)
+
+        exit()
 
     file_path = "ahc_settings.py"
     class_name = "AHCSettings"
     settings = load_class_from_path(file_path, class_name)
 
-    if args.command == "setup":
-        print("setup")
-    elif args.command == "test":
+    if args.command == "test":
         basicConfig(
             format="%(asctime)s [%(levelname)s] : %(message)s",
             datefmt="%H:%M:%S",
