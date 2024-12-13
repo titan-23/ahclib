@@ -135,7 +135,7 @@
           <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
         </button>
       </div>
-      <label class="toc-overlay-icon toc-header-icon no-toc" for="__toc">
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
         <div class="visually-hidden">Toggle table of contents sidebar</div>
         <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
       </label>
@@ -182,7 +182,7 @@
               <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
             </button>
           </div>
-          <label class="toc-overlay-icon toc-content-icon no-toc" for="__toc">
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
             <div class="visually-hidden">Toggle table of contents sidebar</div>
             <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
           </label>
@@ -190,111 +190,121 @@
         <article role="main">
           <section id="ahc-tools">
 <h1>AHC Tools<a class="headerlink" href="#ahc-tools" title="Link to this heading">¶</a></h1>
-<p>AHC並列実行のツールです。</p>
-<p>## インストール方法</p>
-<p>インストールには以下のコマンドを実行してください。</p>
-<div class="highlight-shell notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>python3<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>git+https://github.com/titan-23/ahctools
+<p><a class="reference external" href="https://atcoder.jp/users/titan23?contestType=heuristic">titan23</a>  が使用している、AHC のツールです。
+ありえないバグがあるかもしれません。ご注意ください。</p>
+<p><a class="reference external" href="https://github.com/titan-23/ahctools/tree/main">view on github</a></p>
+<section id="id1">
+<h2>インストール方法<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h2>
+<p>インストールには以下のコマンドを実行してください</p>
+<div class="highlight-shell notranslate"><div class="highlight"><pre><span></span>python3<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>git+https://github.com/titan-23/ahctools
 </pre></div>
 </div>
-<p>アンインストールするときは以下です。</p>
-<div class="highlight-shell notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>python3<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>uninstall<span class="w"> </span>git+https://github.com/titan-23/ahctools
+<p>アンインストールするときは以下です</p>
+<div class="highlight-shell notranslate"><div class="highlight"><pre><span></span>python3<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>uninstall<span class="w"> </span>ahctools
 </pre></div>
 </div>
-<p>## 実行方法</p>
-<p>### 並列実行</p>
-<p>以下のコマンドで実行できます。</p>
-<div class="highlight-shell notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>python3<span class="w"> </span>-m<span class="w"> </span>ahctools<span class="w"> </span><span class="nb">test</span><span class="w"> </span><span class="o">[</span>-c<span class="o">]</span><span class="w"> </span><span class="o">[</span>-v<span class="o">]</span><span class="w"> </span><span class="o">[</span>-r<span class="o">]</span>
+</section>
+<section id="id2">
+<h2>使い方<a class="headerlink" href="#id2" title="Link to this heading">¶</a></h2>
+<section id="id3">
+<h3>並列実行<a class="headerlink" href="#id3" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">njobs</span></code> 数のスレッドを立ち上げて実行します。結果を記録した csv ファイルと実行ソースファイルが <code class="docutils literal notranslate"><span class="pre">./ahctools_results/</span></code> ディレクトリに保存されます</p>
+<p>コマンドは以下です</p>
+<div class="highlight-shell notranslate"><div class="highlight"><pre><span></span>python3<span class="w"> </span>-m<span class="w"> </span>ahctools<span class="w"> </span><span class="nb">test</span><span class="w"> </span><span class="o">[</span>-c<span class="o">]</span><span class="w"> </span><span class="o">[</span>-v<span class="o">]</span><span class="w"> </span><span class="o">[</span>-r<span class="o">]</span>
 </pre></div>
 </div>
-<p>コマンドオプション:
-- <code class="docutils literal notranslate"><span class="pre">-c</span></code> コンパイルします。
-- <code class="docutils literal notranslate"><span class="pre">-v</span></code> ログを表示します。
-- <code class="docutils literal notranslate"><span class="pre">-r</span></code> 標準出力と標準エラー出力をファイルに保存します。オプションを指定しない場合、結果を記録したcsvファイルのみを得られます。</p>
-<p>### optunaを用いたパラメータ探索</p>
-<p>以下のコマンドで実行できます。</p>
-<div class="highlight-shell notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>python3<span class="w"> </span>-m<span class="w"> </span>ahctools<span class="w"> </span>opt
-</pre></div>
-</div>
-<p>## 設定方法</p>
-<p>### 共通 / <cite>test</cite></p>
+<p><strong>オプション</strong></p>
 <ul class="simple">
-<li><dl class="simple">
-<dt>スレッド数 <cite>njobs</cite></dt><dd><ul>
-<li><p>例: <cite>127</cite></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-c</span></code> : コンパイルします</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-v</span></code> : ログを表示します(推奨)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-r</span></code> : 標準出力と標準エラー出力をすべて保存します</p></li>
 </ul>
-</dd>
-</dl>
-</li>
-<li><dl class="simple">
-<dt>ファイル名 <cite>filename</cite></dt><dd><ul>
-<li><p>例: <cite>“./main.cpp”</cite></p></li>
-</ul>
-</dd>
-</dl>
-</li>
-<li><dl class="simple">
-<dt>コンパイルコマンド <cite>compile_command</cite></dt><dd><ul>
-<li><p>例: <cite>“g++ ./main.cpp -O2 -std=c++20”</cite></p></li>
-</ul>
-</dd>
-</dl>
-</li>
-<li><dl class="simple">
-<dt>実行コマンド <cite>execute_command</cite></dt><dd><ul>
-<li><p>例: <cite>“./a.out”</cite> など</p></li>
-</ul>
-</dd>
-</dl>
-</li>
-<li><dl class="simple">
-<dt>入力ファイル <cite>input_file_names</cite></dt><dd><ul>
-<li><p>例: <cite>[f’./in/{str(i).zfill(4)}.txt’ for i in range(100)]</cite></p></li>
-</ul>
-</dd>
-</dl>
-</li>
-<li><dl class="simple">
-<dt>制限時間 <cite>timeout</cite></dt><dd><ul>
-<li><p>例: <cite>2000</cite></p></li>
-<li><p>指定しないときは <cite>None</cite> としてください。</p></li>
-</ul>
-</dd>
-</dl>
-</li>
-<li><dl class="simple">
-<dt>集計関数 <cite>get_score</cite></dt><dd><ul>
-<li><p>平均など。</p></li>
-</ul>
-</dd>
-</dl>
-</li>
-</ul>
-<p>### <cite>optimizer</cite>
-- <cite>study_name</cite></p>
-<blockquote>
-<div><ul class="simple">
-<li><p><cite>study_name</cite> が既にある場合、そのデータベースが利用される。</p></li>
-</ul>
-</div></blockquote>
+</section>
+<section id="optuna">
+<h3>Optuna を用いたパラメータ探索<a class="headerlink" href="#optuna" title="Link to this heading">¶</a></h3>
+<p>コマンドは以下です</p>
+<div class="highlight-shell notranslate"><div class="highlight"><pre><span></span>python3<span class="w"> </span>-m<span class="w"> </span>ahctools<span class="w"> </span>opt
+</pre></div>
+</div>
+</section>
+</section>
+<section id="id4">
+<h2>設定ファイル<a class="headerlink" href="#id4" title="Link to this heading">¶</a></h2>
 <ul class="simple">
-<li><dl class="simple">
-<dt><cite>direction</cite></dt><dd><ul>
-<li><p><cite>minimize</cite> か <cite>maximize</cite></p></li>
+<li><p>スレッド数 (<code class="docutils literal notranslate"><span class="pre">njobs</span></code>):</p>
+<ul>
+<li><p>例: <code class="docutils literal notranslate"><span class="pre">127</span></code></p></li>
+<li><p>(パソコンの最大スレッド数-1)との <code class="docutils literal notranslate"><span class="pre">min</span></code> がとられる</p></li>
 </ul>
-</dd>
-</dl>
 </li>
-<li><p>optuna の試行回数 <cite>n_trials</cite></p></li>
-<li><p>optuna のスレッド数 <cite>n_jobs_optuna</cite></p></li>
-<li><dl class="simple">
-<dt>推定するもの</dt><dd><ul>
-<li><p><cite>objective(trial: optuna.trial.Trial) -&gt; tuple:</cite></p></li>
+<li><p>ファイル名 (<code class="docutils literal notranslate"><span class="pre">filename</span></code>):</p>
+<ul>
+<li><p>例: <code class="docutils literal notranslate"><span class="pre">&quot;./main.cpp&quot;</span></code></p></li>
+</ul>
+</li>
+<li><p>コンパイルコマンド (<code class="docutils literal notranslate"><span class="pre">compile_command</span></code>):</p>
+<ul>
+<li><p>例: <code class="docutils literal notranslate"><span class="pre">&quot;g++</span> <span class="pre">./main.cpp</span> <span class="pre">-O2</span> <span class="pre">-std=c++20&quot;</span></code></p></li>
+<li><p>コンパイルす必要が無いときは、<code class="docutils literal notranslate"><span class="pre">None</span></code> とする</p></li>
+</ul>
+</li>
+<li><p>実行コマンド (<code class="docutils literal notranslate"><span class="pre">execute_command</span></code>):</p>
+<ul>
+<li><p>例: <code class="docutils literal notranslate"><span class="pre">&quot;./a.out&quot;</span></code> など</p></li>
+</ul>
+</li>
+<li><p>入力ファイル (<code class="docutils literal notranslate"><span class="pre">input_file_names</span></code>):</p>
+<ul>
+<li><p>例: <code class="docutils literal notranslate"><span class="pre">[f'./in/{str(i).zfill(4)}.txt'</span> <span class="pre">for</span> <span class="pre">i</span> <span class="pre">in</span> <span class="pre">range(100)]</span></code></p></li>
+</ul>
+</li>
+<li><p>制限時間 (<code class="docutils literal notranslate"><span class="pre">timeout</span></code>):</p>
+<ul>
+<li><p>例: <code class="docutils literal notranslate"><span class="pre">2000</span></code></p></li>
+<li><p>指定しないときは <code class="docutils literal notranslate"><span class="pre">None</span></code> とする</p></li>
+<li><p>各テストでメモリを多く使う場合など、正確さに欠ける場合があります</p></li>
+</ul>
+</li>
+<li><p>集計関数 (<code class="docutils literal notranslate"><span class="pre">get_score</span></code>):</p>
+<ul>
+<li><p>例: 平均など</p></li>
+</ul>
+</li>
+</ul>
+<section id="id5">
+<h3>Optuna を用いたパラメータ探索用の設定<a class="headerlink" href="#id5" title="Link to this heading">¶</a></h3>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">study_name</span></code>:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">study_name</span></code> が既にある場合、そのデータベースが利用される</p></li>
+</ul>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">direction</span></code>:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">minimize</span></code> か <code class="docutils literal notranslate"><span class="pre">maximize</span></code></p></li>
+</ul>
+</li>
+<li><p>optuna の試行回数 (<code class="docutils literal notranslate"><span class="pre">n_trials</span></code>):</p>
+<ul class="simple">
+<li><p>例: <code class="docutils literal notranslate"><span class="pre">50</span></code></p></li>
+</ul>
+</li>
+<li><p>optuna のスレッド数 (<code class="docutils literal notranslate"><span class="pre">n_jobs_optuna</span></code>):</p>
+<ul class="simple">
+<li><p>例: <code class="docutils literal notranslate"><span class="pre">1</span></code></p></li>
+</ul>
+</li>
+<li><p>推定するもの:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span> <span class="nf">objective</span><span class="p">(</span><span class="n">trial</span><span class="p">:</span> <span class="n">optuna</span><span class="o">.</span><span class="n">trial</span><span class="o">.</span><span class="n">Trial</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">:</span>
+</pre></div>
+</div>
+<ul class="simple">
 <li><p>返り値のタプルはコマンドライン引数として渡す順番にする</p></li>
 </ul>
-</dd>
-</dl>
 </li>
 </ul>
+</section>
+</section>
 </section>
 
         </article>
@@ -322,8 +332,36 @@
         
       </footer>
     </div>
-    <aside class="toc-drawer no-toc">
+    <aside class="toc-drawer">
       
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">AHC Tools</a><ul>
+<li><a class="reference internal" href="#id1">インストール方法</a></li>
+<li><a class="reference internal" href="#id2">使い方</a><ul>
+<li><a class="reference internal" href="#id3">並列実行</a></li>
+<li><a class="reference internal" href="#optuna">Optuna を用いたパラメータ探索</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#id4">設定ファイル</a><ul>
+<li><a class="reference internal" href="#id5">Optuna を用いたパラメータ探索用の設定</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
       
       
     </aside>

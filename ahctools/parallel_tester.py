@@ -83,6 +83,8 @@ class ParallelTester:
 
     def compile(self) -> None:
         """``compile_command`` よりコンパイルします。"""
+        if self.compile_command is None:
+            return
         logger.info("Compiling ...")
         subprocess.run(
             self.compile_command,
