@@ -76,7 +76,6 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Error: {e}")
             sys.exit(1)
-
         exit()
 
     file_path = "ahc_settings.py"
