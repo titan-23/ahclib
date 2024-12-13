@@ -315,14 +315,13 @@ class ParallelTester:
         self.output_dir += "all_tests/"
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
-        with open(f"{self.output_dir}{self.filename}", "w") as outs:
-            with open(self.filename, "r") as inps:
-                for line in inps:
-                    print(line, file=outs)
-
         self.output_dir += dt_now.strftime("%Y-%m-%d_%H-%M-%S")
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
+        with open(os.path.join(self.output_dir, self.filename), "w", encoding="utf-8") as outs:
+            with open(self.filename, "r", encoding="utf-8") as inps:
+                for line in inps:
+                    outs.write(line)
 
         if record:
             if not os.path.exists(f"{self.output_dir}/err/"):
