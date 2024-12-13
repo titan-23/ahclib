@@ -5,15 +5,18 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ahctools"
 version = "0.1.0"
-description = "AHCツール"
+description = "AHCのための並列実行とoptuna最適化ツール"
 authors = [
     { name = "titan23", email = "titan23.kyopuro@gmail.com" }
 ]
 license = { text = "特になし" }
-readme = "README.md"
+urls = { "Homepage" = "https://github.com/titan-23/ahctools" }
 requires-python = ">=3.10"
 keywords = ["AtCoder", "AHC", "heuristic", "tools"]
+dependencies = [
+    "optuna>=4.1.0",
+]
+readme = "README.md"
 
-[project.urls]
-Homepage = "https://github.com/titan-23/ahctools"
-Repository = "https://github.com/titan-23/ahctools"
+[tool.setuptools.packages.find]
+where = ["ahctools"]

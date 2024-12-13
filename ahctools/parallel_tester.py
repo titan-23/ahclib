@@ -420,6 +420,14 @@ def run_test(
     compile: bool = False,
     record: bool = True,
 ) -> None:
+    basicConfig(
+        format="%(asctime)s [%(levelname)s] : %(message)s",
+        datefmt="%H:%M:%S",
+        level=os.getenv("LOG_LEVEL", "INFO"),
+    )
+
+    njobs = max(1, min(njobs, multiprocessing.cpu_count() - 1))
+
     tester = build_tester(settings, njobs, verbose)
     logger.info(f"{njobs=}")
 

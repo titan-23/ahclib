@@ -5,7 +5,7 @@ import os
 import multiprocessing
 from .parallel_tester import ParallelTester, build_tester
 from .ahc_settings import AHCSettings
-from .ahc_util import to_green, to_red, to_blue, to_bold
+from .ahc_util import to_blue, to_bold
 
 logger = getLogger(__name__)
 
@@ -15,7 +15,7 @@ class Optimizer:
     def __init__(self, settings: AHCSettings) -> None:
         self.settings: AHCSettings = settings
         logger.info(f"------------------------------------------")
-        logger.info(to_blue(f"Optimizer settings:"))
+        logger.info(to_bold(to_blue(f"Optimizer settings:")))
         logger.info(f"- study_name : {to_bold(settings.study_name)}")
         logger.info(f"- direction  : {to_bold(settings.direction)}")
         logger.info(f"- ntrials    : {to_bold(settings.ntrials)}")
