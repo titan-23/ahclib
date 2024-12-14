@@ -237,71 +237,66 @@
 </section>
 <section id="id5">
 <h2>設定ファイル<a class="headerlink" href="#id5" title="Link to this heading">¶</a></h2>
+<p>設定ファイル <code class="docutils literal notranslate"><span class="pre">ahc_settings</span></code> 中の <code class="docutils literal notranslate"><span class="pre">AHCSettings</span></code> クラスに以下の情報を書いてください</p>
 <ul class="simple">
-<li><p>スレッド数 (<code class="docutils literal notranslate"><span class="pre">njobs</span></code>):</p>
+<li><p>スレッド数 (<code class="docutils literal notranslate"><span class="pre">njobs</span></code>)</p>
 <ul>
-<li><p>例: <code class="docutils literal notranslate"><span class="pre">127</span></code></p></li>
 <li><p>(パソコンの最大スレッド数-1)との <code class="docutils literal notranslate"><span class="pre">min</span></code> がとられる</p></li>
 </ul>
 </li>
-<li><p>ファイル名 (<code class="docutils literal notranslate"><span class="pre">filename</span></code>):</p>
+<li><p>ファイル名 (<code class="docutils literal notranslate"><span class="pre">filename</span></code>)</p></li>
+<li><p>コンパイルコマンド (<code class="docutils literal notranslate"><span class="pre">compile_command</span></code>)</p>
 <ul>
-<li><p>例: <code class="docutils literal notranslate"><span class="pre">&quot;./main.cpp&quot;</span></code></p></li>
+<li><p>コンパイルする必要が無いときは、<code class="docutils literal notranslate"><span class="pre">None</span></code> とする</p></li>
 </ul>
 </li>
-<li><p>コンパイルコマンド (<code class="docutils literal notranslate"><span class="pre">compile_command</span></code>):</p>
+<li><p>実行コマンド (<code class="docutils literal notranslate"><span class="pre">execute_command</span></code>)</p></li>
+<li><p>入力ファイル (<code class="docutils literal notranslate"><span class="pre">input_file_names</span></code>)</p>
 <ul>
-<li><p>例: <code class="docutils literal notranslate"><span class="pre">&quot;g++</span> <span class="pre">./main.cpp</span> <span class="pre">-O2</span> <span class="pre">-std=c++20&quot;</span></code></p></li>
-<li><p>コンパイルす必要が無いときは、<code class="docutils literal notranslate"><span class="pre">None</span></code> とする</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">list[str]</span></code> の形式で書く</p></li>
 </ul>
 </li>
-<li><p>実行コマンド (<code class="docutils literal notranslate"><span class="pre">execute_command</span></code>):</p>
+<li><p>制限時間 (<code class="docutils literal notranslate"><span class="pre">timeout</span></code>)</p>
 <ul>
-<li><p>例: <code class="docutils literal notranslate"><span class="pre">&quot;./a.out&quot;</span></code> など</p></li>
-</ul>
-</li>
-<li><p>入力ファイル (<code class="docutils literal notranslate"><span class="pre">input_file_names</span></code>):</p>
-<ul>
-<li><p>例: <code class="docutils literal notranslate"><span class="pre">[f'./in/{str(i).zfill(4)}.txt'</span> <span class="pre">for</span> <span class="pre">i</span> <span class="pre">in</span> <span class="pre">range(100)]</span></code></p></li>
-</ul>
-</li>
-<li><p>制限時間 (<code class="docutils literal notranslate"><span class="pre">timeout</span></code>):</p>
-<ul>
-<li><p>例: <code class="docutils literal notranslate"><span class="pre">2000</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ms</span></code> 単位で指定する</p></li>
 <li><p>指定しないときは <code class="docutils literal notranslate"><span class="pre">None</span></code> とする</p></li>
-<li><p>各テストでメモリを多く使う場合など、正確さに欠ける場合があります</p></li>
+<li><p>各テストでメモリを多く使う場合など、正確さに欠けることがある点に注意</p></li>
 </ul>
 </li>
-<li><p>集計関数 (<code class="docutils literal notranslate"><span class="pre">get_score</span></code>):</p>
+<li><p>集計関数 (<code class="docutils literal notranslate"><span class="pre">get_score</span></code>)</p>
 <ul>
 <li><p>例: 平均など</p></li>
 </ul>
 </li>
 </ul>
+<p>例:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">njobs</span> <span class="o">=</span> <span class="mi">127</span>
+<span class="n">filename</span> <span class="o">=</span> <span class="s2">&quot;./main.cpp&quot;</span>
+<span class="n">compile_command</span> <span class="o">=</span> <span class="s2">&quot;g++ ./main.cpp -O2 -std=c++20 -o a.out -I./../../../Library_cpp&quot;</span>
+<span class="n">execute_command</span> <span class="o">=</span> <span class="s2">&quot;./a.out&quot;</span>
+<span class="n">input_file_names</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s2">&quot;./in/</span><span class="si">{</span><span class="nb">str</span><span class="p">(</span><span class="n">i</span><span class="p">)</span><span class="o">.</span><span class="n">zfill</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span><span class="si">}</span><span class="s2">.txt&quot;</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">100</span><span class="p">)]</span>
+<span class="n">timeout</span> <span class="o">=</span> <span class="mi">3100</span>
+
+<span class="k">def</span> <span class="nf">get_score</span><span class="p">(</span><span class="n">scores</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nb">sum</span><span class="p">(</span><span class="n">scores</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">scores</span><span class="p">)</span>
+</pre></div>
+</div>
 <section id="id6">
 <h3>Optuna を用いたパラメータ探索用の設定<a class="headerlink" href="#id6" title="Link to this heading">¶</a></h3>
 <ul>
-<li><p><code class="docutils literal notranslate"><span class="pre">study_name</span></code>:</p>
+<li><p><code class="docutils literal notranslate"><span class="pre">study_name</span></code></p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">study_name</span></code> が既にある場合、そのデータベースが利用される</p></li>
 </ul>
 </li>
-<li><p><code class="docutils literal notranslate"><span class="pre">direction</span></code>:</p>
+<li><p><code class="docutils literal notranslate"><span class="pre">direction</span></code></p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">minimize</span></code> か <code class="docutils literal notranslate"><span class="pre">maximize</span></code></p></li>
 </ul>
 </li>
-<li><p>optuna の試行回数 (<code class="docutils literal notranslate"><span class="pre">n_trials</span></code>):</p>
-<ul class="simple">
-<li><p>例: <code class="docutils literal notranslate"><span class="pre">50</span></code></p></li>
-</ul>
-</li>
-<li><p>optuna のスレッド数 (<code class="docutils literal notranslate"><span class="pre">n_jobs_optuna</span></code>):</p>
-<ul class="simple">
-<li><p>例: <code class="docutils literal notranslate"><span class="pre">1</span></code></p></li>
-</ul>
-</li>
-<li><p>推定するもの:</p>
+<li><p>optuna の試行回数 (<code class="docutils literal notranslate"><span class="pre">n_trials</span></code>)</p></li>
+<li><p>optuna のスレッド数 (<code class="docutils literal notranslate"><span class="pre">n_jobs_optuna</span></code>)</p></li>
+<li><p>推定するもの</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span> <span class="nf">objective</span><span class="p">(</span><span class="n">trial</span><span class="p">:</span> <span class="n">optuna</span><span class="o">.</span><span class="n">trial</span><span class="o">.</span><span class="n">Trial</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">:</span>
 </pre></div>
 </div>
@@ -310,6 +305,17 @@
 </ul>
 </li>
 </ul>
+<p>例:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">study_name</span> <span class="o">=</span> <span class="s2">&quot;test&quot;</span>
+<span class="n">direction</span> <span class="o">=</span> <span class="s2">&quot;minimize&quot;</span>
+<span class="n">n_trials</span> <span class="o">=</span> <span class="mi">50</span>
+<span class="n">n_jobs_optuna</span> <span class="o">=</span> <span class="mi">1</span>
+
+<span class="k">def</span> <span class="nf">objective</span><span class="p">(</span><span class="n">trial</span><span class="p">:</span> <span class="n">optuna</span><span class="o">.</span><span class="n">trial</span><span class="o">.</span><span class="n">Trial</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">:</span>
+    <span class="n">start_temp</span> <span class="o">=</span> <span class="n">trial</span><span class="o">.</span><span class="n">suggest_float</span><span class="p">(</span><span class="s2">&quot;start_temp&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">100</span><span class="p">,</span> <span class="n">log</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">start_temp</span><span class="p">,</span>
+</pre></div>
+</div>
 </section>
 </section>
 </section>
