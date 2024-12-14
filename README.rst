@@ -70,17 +70,22 @@ Optuna を用いたパラメータ探索
 設定ファイル``ahc_settings``中の``AHCSettings``クラスに以下の情報を書いてください
 
 * スレッド数 (``njobs``)
+
   - (パソコンの最大スレッド数-1)との ``min`` がとられる
 * ファイル名 (``filename``)
 * コンパイルコマンド (``compile_command``)
+
   - コンパイルする必要が無いときは、``None`` とする
 * 実行コマンド (``execute_command``)
 * 入力ファイル (``input_file_names``)
+
   - ``list[str]``の形式で書く
 * 制限時間 (``timeout``)
+
   - 指定しないときは ``None`` とする
   - 各テストでメモリを多く使う場合など、正確さに欠けることがある点に注意
 * 集計関数 (``get_score``)
+
   - 例: 平均など
 
 .. code-block:: python
