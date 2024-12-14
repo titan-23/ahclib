@@ -1,7 +1,0 @@
-README.md
-pyproject.toml
-ahctools/ahctools.egg-info/PKG-INFO
-ahctools/ahctools.egg-info/SOURCES.txt
-ahctools/ahctools.egg-info/dependency_links.txt
-ahctools/ahctools.egg-info/requires.txt
-ahctools/ahctools.egg-info/top_level.txt
