@@ -1,7 +1,10 @@
 import optuna
+import optunahub
+import socket
 import time
 from logging import getLogger, basicConfig
 import os
+import subprocess
 import multiprocessing
 from .parallel_tester import ParallelTester, build_tester
 from .ahc_settings import AHCSettings
@@ -14,20 +17,15 @@ class Optimizer:
 
     def __init__(self, settings: AHCSettings) -> None:
         self.settings: AHCSettings = settings
-        logger.info(f"------------------------------------------")
-        logger.info(to_bold(to_blue(f"Optimizer settings:")))
-        logger.info(f"- study_name : {to_bold(settings.study_name)}")
-        logger.info(f"- direction  : {to_bold(settings.direction)}")
-        logger.info(f"- ntrials    : {to_bold(settings.ntrials)}")
-        logger.info(f"------------------------------------------")
-        self.path = f"./ahctools_results/optimizer_results/{self.settings.study_name}"
+        # self.path = f"./ahctools_results/optimizer_results/{self.settings.study_name}"
+        self.path = f"./ahctools_results/optimizer_results"
         if not os.path.exists(self.path):
             os.makedirs(self.path)
 
     def optimize_wilcoxon(self) -> None:
         raise NotImplementedError
         tester: ParallelTester = build_tester(
-            self.settings, njobs=self.settings.njobs_parallel_tester, verbose=False
+            self.settings, njobs=self.settings.njobs, verbose=False
         )
         tester.compile()
         start = time.time()
@@ -43,7 +41,7 @@ class Optimizer:
         def _objective(trial: optuna.trial.Trial) -> float:
             tester: ParallelTester = build_tester(
                 self.settings,
-                njobs=self.settings.njobs_parallel_tester,
+                njobs=self.settings.njobs,
                 verbose=False,
             )
             args = self.settings.objective(trial)
@@ -57,7 +55,7 @@ class Optimizer:
 
         study.optimize(
             _objective,
-            n_trials=self.settings.ntrials,
+            n_trials=self.settings.n_trials,
             n_jobs=min(self.settings.njobs_optuna, multiprocessing.cpu_count() - 1),
         )
 
@@ -67,41 +65,89 @@ class Optimizer:
         logger.info(f"Finish parameter seraching. Time: {time.time() - start:.2f}sec.")
 
     def optimize(self) -> None:
-        tester: ParallelTester = build_tester(
-            self.settings, njobs=self.settings.njobs_parallel_tester, verbose=False
-        )
-        tester.compile()
+        logger.info(f"==============================================")
+        logger.info(to_bold(to_blue(f"Optimizer settings:")))
+        logger.info(f"- study_name    : {to_bold(self.settings.study_name)}")
+        logger.info(f"- direction     : {to_bold(self.settings.direction)}")
+        logger.info(f"- n_trials      : {to_bold(self.settings.n_trials)}")
+
         start = time.time()
 
-        study: optuna.Study = optuna.create_study(
-            direction=self.settings.direction,
-            study_name=self.settings.study_name,
-            storage=f"sqlite:///{self.path}/{self.settings.study_name}.db",
-            load_if_exists=True,
+        tester: ParallelTester = build_tester(
+            self.settings,
+            njobs=self.settings.njobs,
+            verbose=False,
         )
 
         def _objective(trial: optuna.trial.Trial) -> float:
-            tester: ParallelTester = build_tester(
-                self.settings,
-                njobs=self.settings.njobs_parallel_tester,
-                verbose=False,
-            )
             args = self.settings.objective(trial)
+            tester.clear_execute_command()
             tester.append_execute_command(args)
             scores = tester.run()
             score = tester.get_score(scores)
             return score
 
-        study.optimize(
-            _objective,
-            n_trials=self.settings.ntrials,
-            n_jobs=min(self.settings.njobs_optuna, multiprocessing.cpu_count() - 1),
+        storage = f"sqlite:///{self.path}/data.db"
+        study: optuna.Study = optuna.create_study(
+            direction=self.settings.direction,
+            study_name=self.settings.study_name,
+            storage=storage,
+            load_if_exists=True,
+            sampler=optunahub.load_module(
+                "samplers/auto_sampler"
+            ).AutoSampler(),
         )
 
-        logger.info(study.best_trial)
-        logger.info("writing results ...")
-        self.output(study)
-        logger.info(f"Finish parameter seraching. Time: {time.time() - start:.2f}sec.")
+        def find_available_port(start_port=8080, max_tries=10):
+            for port in range(start_port, start_port + max_tries):
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    try:
+                        s.bind(("127.0.0.1", port))
+                        return port
+                    except OSError:
+                        continue
+            raise RuntimeError("利用可能なポートが見つかりませんでした。")
+
+        try:
+            logger.info(f"------------------------------------------")
+            port = find_available_port()
+            process = subprocess.Popen(
+                # ["optuna-dashboard", "--port", str(port), storage],
+                ["optuna-dashboard", storage],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+
+            dashboard_url = None
+            for line in iter(process.stderr.readline, ''):
+                if line.startswith("Listening on "):
+                    dashboard_url = line.split("Listening on")[-1].strip()
+                    break
+            if dashboard_url:
+                logger.info(f"- dashboard URL : {to_bold(dashboard_url)}")
+            else:
+                logger.error("Dashboard URL could not be determined.")
+                exit(1)
+            logger.info(f"==============================================")
+
+            tester.compile()
+            study.optimize(
+                _objective,
+                n_trials=self.settings.n_trials,
+                n_jobs=min(self.settings.njobs_optuna, multiprocessing.cpu_count() - 1),
+            )
+
+            logger.info(study.best_trial)
+            logger.info("writing results ...")
+            self.output(study)
+            logger.info(f"Finish parameter seraching. Time: {time.time() - start:.2f}sec.")
+        except Exception as e:
+            print(e)
+            exit(1)
+        process.terminate()
+        process.wait()
 
     def output(self, study: optuna.Study) -> None:
         if not os.path.exists(self.path):
@@ -109,25 +155,33 @@ class Optimizer:
         with open(f"{self.path}/result.txt", "w", encoding="utf-8") as f:
             print(study.best_trial, file=f)
 
-        img_path = self.path + "/images"
+        img_path = os.path.join(self.path, "images")
         if not os.path.exists(img_path):
             os.makedirs(img_path)
 
         fig = optuna.visualization.plot_contour(study)
-        fig.write_html(f"{img_path}/contour.html")
-        fig.write_image(f"{img_path}/contour.png")
+        fig.write_html(os.path.join(img_path, "contour.html"))
+        fig.write_image(os.path.join(img_path, "contour.png"))
+
+        fig = optuna.visualization.plot_param_importances(study)
+        fig.write_html(os.path.join(img_path, "param_importances.html"))
+        fig.write_image(os.path.join(img_path, "param_importances.png"))
+
         fig = optuna.visualization.plot_edf(study)
-        fig.write_html(f"{img_path}/edf.html")
-        fig.write_image(f"{img_path}/edf.png")
+        fig.write_html(os.path.join(img_path, "edf.html"))
+        fig.write_image(os.path.join(img_path, "edf.png"))
+
         fig = optuna.visualization.plot_optimization_history(study)
-        fig.write_html(f"{img_path}/optimization_history.html")
-        fig.write_image(f"{img_path}/optimization_history.png")
+        fig.write_html(os.path.join(img_path, "optimization_history.html"))
+        fig.write_image(os.path.join(img_path, "optimization_history.png"))
+
         fig = optuna.visualization.plot_parallel_coordinate(study)
-        fig.write_html(f"{img_path}/parallel_coordinate.html")
-        fig.write_image(f"{img_path}/parallel_coordinate.png")
+        fig.write_html(os.path.join(img_path, "parallel_coordinate.html"))
+        fig.write_image(os.path.join(img_path, "parallel_coordinate.png"))
+
         fig = optuna.visualization.plot_slice(study)
-        fig.write_html(f"{img_path}/slice.html")
-        fig.write_image(f"{img_path}/slice.png")
+        fig.write_html(os.path.join(img_path, "slice.html"))
+        fig.write_image(os.path.join(img_path, "slice.png"))
 
 
 def run_optimizer(settings: AHCSettings):
