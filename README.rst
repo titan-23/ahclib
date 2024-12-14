@@ -90,6 +90,7 @@ Optuna を用いたパラメータ探索
 
 例:
 .. code-block:: python
+
     njobs = 127
     filename = "./main.cpp"
     compile_command = "g++ ./main.cpp -O2 -std=c++20 -o a.out -I./../../../Library_cpp"
