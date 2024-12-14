@@ -67,7 +67,7 @@ Optuna を用いたパラメータ探索
 設定ファイル
 -------------
 
-設定ファイル``ahc_settings``中の``AHCSettings``クラスに以下の情報を書いてください
+設定ファイル ``ahc_settings`` 中の ``AHCSettings`` クラスに以下の情報を書いてください
 
 * スレッド数 (``njobs``)
 
@@ -87,16 +87,13 @@ Optuna を用いたパラメータ探索
 
 * 制限時間 (``timeout``)
 
+  - ``ms`` 単位で指定する
   - 指定しないときは ``None`` とする
   - 各テストでメモリを多く使う場合など、正確さに欠けることがある点に注意
 
 * 集計関数 (``get_score``)
 
   - 例: 平均など
-
-.. code-block:: python
-
-    def objective(trial: optuna.trial.Trial) -> tuple:
 
 
 例:
