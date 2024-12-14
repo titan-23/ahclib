@@ -55,6 +55,7 @@ class ParallelTester:
         self.filename = filename
         self.compile_command = compile_command.split()
         self.execute_command = execute_command.split()
+        self.added_command = []
         self.input_file_names = input_file_names
         self.cpu_count = cpu_count
         self.verbose = verbose
@@ -79,7 +80,11 @@ class ParallelTester:
     def append_execute_command(self, args: Iterable[str]) -> None:
         """コマンドライン引数を追加します。"""
         for arg in args:
-            self.execute_command.append(str(arg))
+            self.added_command.append(str(arg))
+    
+    def clear_execute_command(self) -> None:
+        """これまでに追加したコマンドライン引数を削除します"""
+        self.added_command.clear()
 
     def compile(self) -> None:
         """``compile_command`` よりコンパイルします。"""
@@ -104,7 +109,7 @@ class ParallelTester:
             input_text = "".join(f.read())
         try:
             result = subprocess.run(
-                self.execute_command,
+                self.execute_command + self.added_command,
                 stderr=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 input=input_text,
@@ -170,7 +175,7 @@ class ParallelTester:
 
         try:
             result = subprocess.run(
-                self.execute_command,
+                self.execute_command + self.added_command,
                 input=input_text,
                 timeout=self.timeout,
                 stderr=subprocess.PIPE,
@@ -221,7 +226,7 @@ class ParallelTester:
         try:
             start_time = time.time()
             result = subprocess.run(
-                self.execute_command,
+                self.execute_command + self.added_command,
                 input=input_text,
                 timeout=self.timeout,
                 stderr=subprocess.PIPE,
