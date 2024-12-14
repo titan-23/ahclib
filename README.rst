@@ -89,6 +89,7 @@ Optuna を用いたパラメータ探索
 
 
 例:
+
 .. code-block:: python
 
     njobs = 127
