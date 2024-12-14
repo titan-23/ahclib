@@ -72,18 +72,24 @@ Optuna を用いたパラメータ探索
 * スレッド数 (``njobs``)
 
   - (パソコンの最大スレッド数-1)との ``min`` がとられる
+
 * ファイル名 (``filename``)
+
 * コンパイルコマンド (``compile_command``)
 
   - コンパイルする必要が無いときは、``None`` とする
+
 * 実行コマンド (``execute_command``)
+
 * 入力ファイル (``input_file_names``)
 
-  - ``list[str]``の形式で書く
+  - ``list[str]`` の形式で書く
+
 * 制限時間 (``timeout``)
 
   - 指定しないときは ``None`` とする
   - 各テストでメモリを多く使う場合など、正確さに欠けることがある点に注意
+
 * 集計関数 (``get_score``)
 
   - 例: 平均など
@@ -121,11 +127,7 @@ Optuna を用いたパラメータ探索用の設定
 
 * optuna の試行回数 (``n_trials``)
 
-  - 例: ``50``
-
 * optuna のスレッド数 (``n_jobs_optuna``)
-
-  - 例: ``1``
 
 * 推定するもの
 
@@ -134,3 +136,18 @@ Optuna を用いたパラメータ探索用の設定
       def objective(trial: optuna.trial.Trial) -> tuple:
 
   - 返り値のタプルはコマンドライン引数として渡す順番にする
+
+
+例:
+
+.. code-block:: python
+
+  study_name = "test"
+  direction = "minimize"
+  n_trials = 50
+  n_jobs_optuna = 1
+
+  def objective(trial: optuna.trial.Trial) -> tuple:
+      start_temp = trial.suggest_float("start_temp", 1, 100, log=True)
+      return start_temp,
+
