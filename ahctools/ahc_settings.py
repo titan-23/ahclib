@@ -35,7 +35,7 @@ class AHCSettings:
     n_trials = 50
 
     # optuna の cpu_count
-    n_jobs_optuna = 1
+    njobs_optuna = 1
 
     def objective(trial: optuna.trial.Trial) -> tuple:
         # 返り値のタプルはコマンドライン引数として渡す順番にする
