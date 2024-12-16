@@ -1,7 +1,7 @@
 Metadata-Version: 2.1
 Name: ahclib
-Version: 0.1.5
-Summary: AHCのための並列実行とoptuna最適化ツール
+Version: 0.1.6
+Summary: Parallel Execution and Optuna Optimization Tools for AHC
 Home-page: https://github.com/titan-23/ahclib
 Author: titan23
 Author-email: titan23.kyopuro@gmail.com
