@@ -4,23 +4,8 @@ AHC Tools
 `titan23 <https://atcoder.jp/users/titan23?contestType=heuristic>`_  が使用している、AHC のツールです。
 ありえないバグがあるかもしれません。ご注意ください。
 
-`view on github <https://github.com/titan-23/ahclib/tree/main>`_
+`View on GitHub <https://github.com/titan-23/ahclib/tree/main>`_
 
-
-インストール方法
--------------------
-
-インストールには以下のコマンドを実行してください
-
-.. code-block:: shell
-
-    python3 -m pip install git+https://github.com/titan-23/ahclib
-
-アンインストールするときは以下です
-
-.. code-block:: shell
-
-    python3 -m pip uninstall ahclib
 
 使い方
 -------
