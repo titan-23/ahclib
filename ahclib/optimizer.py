@@ -17,7 +17,6 @@ class Optimizer:
 
     def __init__(self, settings: AHCSettings) -> None:
         self.settings: AHCSettings = settings
-        # self.path = f"./ahclib_results/optimizer_results/{self.settings.study_name}"
         self.path = f"./ahclib_results/optimizer_results"
         if not os.path.exists(self.path):
             os.makedirs(self.path)
@@ -61,7 +60,7 @@ class Optimizer:
 
         logger.info(study.best_trial)
         logger.info("writing results ...")
-        self.output(study)
+        self.output_study(study)
         logger.info(f"Finish parameter seraching. Time: {time.time() - start:.2f}sec.")
 
     def optimize(self) -> None:
@@ -93,24 +92,12 @@ class Optimizer:
             study_name=self.settings.study_name,
             storage=storage,
             load_if_exists=True,
-            sampler=optunahub.load_module("samplers/auto_sampler").AutoSampler(),
+            # sampler=optunahub.load_module("samplers/auto_sampler").AutoSampler(),
         )
-
-        def find_available_port(start_port=8080, max_tries=10):
-            for port in range(start_port, start_port + max_tries):
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    try:
-                        s.bind(("127.0.0.1", port))
-                        return port
-                    except OSError:
-                        continue
-            raise RuntimeError("利用可能なポートが見つかりませんでした。")
 
         try:
             logger.info(f"------------------------------------------")
-            port = find_available_port()
             process = subprocess.Popen(
-                # ["optuna-dashboard", "--port", str(port), storage],
                 ["optuna-dashboard", storage],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -139,7 +126,7 @@ class Optimizer:
 
             logger.info(study.best_trial)
             logger.info("writing results ...")
-            self.output(study)
+            self.output_study(study)
             logger.info(
                 f"Finish parameter seraching. Time: {time.time() - start:.2f}sec."
             )
@@ -149,7 +136,7 @@ class Optimizer:
         process.terminate()
         process.wait()
 
-    def output(self, study: optuna.Study) -> None:
+    def output_study(self, study: optuna.Study) -> None:
         if not os.path.exists(self.path):
             os.makedirs(self.path)
         with open(f"{self.path}/result.txt", "w", encoding="utf-8") as f:
