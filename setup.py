@@ -1,15 +1,13 @@
 from setuptools import setup
 from pathlib import Path
 
-long_description = (Path(__file__).parent / "README.rst").read_text()
-
 setup(
     name="ahclib",
-    version="0.1.5",
-    description="AHCのための並列実行とoptuna最適化ツール",
+    version="0.1.6",
+    description="Parallel Execution and Optuna Optimization Tools for AHC",
     author="titan23",
     author_email="titan23.kyopuro@gmail.com",
-    long_description=long_description,
+    long_description=(Path(__file__).parent / "README.rst").read_text(),
     long_description_content_type="text/x-rst",
     license="MIT License",
     url="https://github.com/titan-23/ahclib",
