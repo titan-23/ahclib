@@ -5,7 +5,7 @@ long_description = (Path(__file__).parent / "README.rst").read_text()
 
 setup(
     name="ahclib",
-    version="0.1.3",
+    version="0.1.5",
     description="AHCのための並列実行とoptuna最適化ツール",
     author="titan23",
     author_email="titan23.kyopuro@gmail.com",

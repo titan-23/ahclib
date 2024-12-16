@@ -2,8 +2,8 @@
 *.in
 *.out
 
-/build/
 /ahclibs.egg-info/
+/dist/
 
 __pycache__/
 *.py[cod]

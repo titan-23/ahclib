@@ -1,14 +1,15 @@
 Metadata-Version: 2.1
 Name: ahclib
-Version: 0.1.3
+Version: 0.1.4.1
 Summary: AHCのための並列実行とoptuna最適化ツール
 Home-page: https://github.com/titan-23/ahclib
 Author: titan23
 Author-email: titan23.kyopuro@gmail.com
-License: 特になし
+License: MIT License
 Keywords: AtCoder,AHC,heuristic
 Requires-Python: >=3.10
 Description-Content-Type: text/x-rst
+License-File: LICENSE
 
 AHC Tools
 ===========

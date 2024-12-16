@@ -1,7 +1,7 @@
 import optuna
 
 """example
-python3 -m ahclibs test -v -c -r
+python3 -m ahclib test -v -c -r
 
 python3 -m opt
 

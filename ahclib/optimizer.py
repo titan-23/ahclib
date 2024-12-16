@@ -1,6 +1,4 @@
 import optuna
-import optunahub
-import socket
 import time
 from logging import getLogger, basicConfig
 import os
@@ -9,6 +7,7 @@ import multiprocessing
 from .parallel_tester import ParallelTester, build_tester
 from .ahc_settings import AHCSettings
 from .ahc_util import to_blue, to_bold
+# import optunahub
 
 logger = getLogger(__name__)
 
@@ -17,6 +16,7 @@ class Optimizer:
 
     def __init__(self, settings: AHCSettings) -> None:
         self.settings: AHCSettings = settings
+        self.study_name = settings.study_name
         self.path = f"./ahclib_results/optimizer_results"
         if not os.path.exists(self.path):
             os.makedirs(self.path)
@@ -137,12 +137,13 @@ class Optimizer:
         process.wait()
 
     def output_study(self, study: optuna.Study) -> None:
-        if not os.path.exists(self.path):
-            os.makedirs(self.path)
-        with open(f"{self.path}/result.txt", "w", encoding="utf-8") as f:
+        path = os.path.join(self.path, self.study_name)
+        if not os.path.exists(path):
+            os.makedirs(path)
+        with open(f"{path}/result.txt", "w", encoding="utf-8") as f:
             print(study.best_trial, file=f)
 
-        img_path = os.path.join(self.path, "images")
+        img_path = os.path.join(path, "images")
         if not os.path.exists(img_path):
             os.makedirs(img_path)
 
