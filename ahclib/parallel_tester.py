@@ -81,7 +81,7 @@ class ParallelTester:
         """コマンドライン引数を追加します。"""
         for arg in args:
             self.added_command.append(str(arg))
-    
+
     def clear_execute_command(self) -> None:
         """これまでに追加したコマンドライン引数を削除します"""
         self.added_command.clear()
@@ -316,7 +316,7 @@ class ParallelTester:
         """実行します。"""
         dt_now = datetime.datetime.now()
 
-        self.output_dir = "./ahctools_results/"
+        self.output_dir = "./ahclib_results/"
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
         self.output_dir += "all_tests/"
@@ -325,7 +325,9 @@ class ParallelTester:
         self.output_dir += dt_now.strftime("%Y-%m-%d_%H-%M-%S")
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
-        with open(os.path.join(self.output_dir, self.filename), "w", encoding="utf-8") as outs:
+        with open(
+            os.path.join(self.output_dir, self.filename), "w", encoding="utf-8"
+        ) as outs:
             with open(self.filename, "r", encoding="utf-8") as inps:
                 for line in inps:
                     outs.write(line)

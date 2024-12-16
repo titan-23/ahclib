@@ -17,8 +17,8 @@ class Optimizer:
 
     def __init__(self, settings: AHCSettings) -> None:
         self.settings: AHCSettings = settings
-        # self.path = f"./ahctools_results/optimizer_results/{self.settings.study_name}"
-        self.path = f"./ahctools_results/optimizer_results"
+        # self.path = f"./ahclib_results/optimizer_results/{self.settings.study_name}"
+        self.path = f"./ahclib_results/optimizer_results"
         if not os.path.exists(self.path):
             os.makedirs(self.path)
 
@@ -93,9 +93,7 @@ class Optimizer:
             study_name=self.settings.study_name,
             storage=storage,
             load_if_exists=True,
-            sampler=optunahub.load_module(
-                "samplers/auto_sampler"
-            ).AutoSampler(),
+            sampler=optunahub.load_module("samplers/auto_sampler").AutoSampler(),
         )
 
         def find_available_port(start_port=8080, max_tries=10):
@@ -121,7 +119,7 @@ class Optimizer:
             )
 
             dashboard_url = None
-            for line in iter(process.stderr.readline, ''):
+            for line in iter(process.stderr.readline, ""):
                 if line.startswith("Listening on "):
                     dashboard_url = line.split("Listening on")[-1].strip()
                     break
@@ -142,7 +140,9 @@ class Optimizer:
             logger.info(study.best_trial)
             logger.info("writing results ...")
             self.output(study)
-            logger.info(f"Finish parameter seraching. Time: {time.time() - start:.2f}sec.")
+            logger.info(
+                f"Finish parameter seraching. Time: {time.time() - start:.2f}sec."
+            )
         except Exception as e:
             print(e)
             exit(1)

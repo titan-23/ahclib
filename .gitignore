@@ -3,7 +3,7 @@
 *.out
 
 /build/
-/ahctools.egg-info/
+/ahclibs.egg-info/
 
 __pycache__/
 *.py[cod]
