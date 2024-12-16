@@ -4,7 +4,7 @@ AHC Tools
 `titan23 <https://atcoder.jp/users/titan23?contestType=heuristic>`_  が使用している、AHC のツールです。
 ありえないバグがあるかもしれません。ご注意ください。
 
-`view on github <https://github.com/titan-23/ahctools/tree/main>`_
+`view on github <https://github.com/titan-23/ahclib/tree/main>`_
 
 
 インストール方法
@@ -14,13 +14,13 @@ AHC Tools
 
 .. code-block:: shell
 
-    python3 -m pip install git+https://github.com/titan-23/ahctools
+    python3 -m pip install git+https://github.com/titan-23/ahclib
 
 アンインストールするときは以下です
 
 .. code-block:: shell
 
-    python3 -m pip uninstall ahctools
+    python3 -m pip uninstall ahclib
 
 使い方
 -------
@@ -32,20 +32,20 @@ AHC Tools
 
 .. code-block:: shell
 
-    python3 -m ahctools setup
+    python3 -m ahclib setup
 
 
 
 並列実行
 ~~~~~~~~~~~~~~~~~~
 
-``njobs`` 数のスレッドを立ち上げて実行します。結果を記録した csv ファイルと実行ソースファイルが ``./ahctools_results/`` ディレクトリに保存されます
+``njobs`` 数のスレッドを立ち上げて実行します。結果を記録した csv ファイルと実行ソースファイルが ``./ahclib_results/`` ディレクトリに保存されます
 
 コマンドは以下です
 
 .. code-block:: shell
 
-    python3 -m ahctools test [-c] [-v] [-r]
+    python3 -m ahclib test [-c] [-v] [-r]
 
 **オプション**
 
@@ -61,7 +61,7 @@ Optuna を用いたパラメータ探索
 
 .. code-block:: shell
 
-    python3 -m ahctools opt
+    python3 -m ahclib opt
 
 
 設定ファイル
@@ -147,4 +147,3 @@ Optuna を用いたパラメータ探索用の設定
   def objective(trial: optuna.trial.Trial) -> tuple:
       start_temp = trial.suggest_float("start_temp", 1, 100, log=True)
       return start_temp,
-
