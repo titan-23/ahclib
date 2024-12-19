@@ -3,7 +3,7 @@ from pathlib import Path
 
 setup(
     name="ahclib",
-    version="0.1.6",
+    version="0.1.0",
     description="Parallel Execution and Optuna Optimization Tools for AHC",
     author="titan23",
     author_email="titan23.kyopuro@gmail.com",
