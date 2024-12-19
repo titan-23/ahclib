@@ -4,6 +4,7 @@
 
 /build/
 /ahctools.egg-info/
+/dist/
 
 __pycache__/
 *.py[cod]
