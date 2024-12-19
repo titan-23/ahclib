@@ -5,6 +5,7 @@ AHC Lib
 ありえないバグがあるかもしれません。ご注意ください。
 
 `View on GitHub <https://github.com/titan-23/ahclib/tree/main>`_
+
 `View on PyPI <https://pypi.org/project/ahclib/>`_
 
 
