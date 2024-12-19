@@ -1,4 +1,4 @@
-AHC Tools
+AHC Lib
 ===========
 
 `titan23 <https://atcoder.jp/users/titan23?contestType=heuristic>`_  が使用している、AHC のツールです。
@@ -90,7 +90,7 @@ Optuna を用いたパラメータ探索
     compile_command = "g++ ./main.cpp -O2 -std=c++20 -o a.out -I./../../../Library_cpp"
     execute_command = "./a.out"
     input_file_names = [f"./in/{str(i).zfill(4)}.txt" for i in range(100)]
-    timeout = 3100
+    timeout = None
 
     def get_score(scores: list[float]) -> float:
         return sum(scores) / len(scores)
@@ -120,7 +120,7 @@ Optuna を用いたパラメータ探索用の設定
   - 返り値のタプルはコマンドライン引数として渡す順番にする
 
 
-例:
+例: 初期温度を探索する
 
 .. code-block:: python
 
@@ -130,6 +130,15 @@ Optuna を用いたパラメータ探索用の設定
   n_jobs_optuna = 1
 
   def objective(trial: optuna.trial.Trial) -> tuple:
-      start_temp = trial.suggest_float("start_temp", 1, 100, log=True)
-      return start_temp,
+      start_temp = trial.suggest_float("start_temp", 1, 1e9, log=True)
+      return start_temp,  # タプルで返す
 
+.. code-block:: cpp
+
+  double start_temp;
+
+  int main(int argc, char *argv[]) {
+      start_temp = std::stod(argv[1]);  // argv[1], ... に objective で返した値が格納されている
+      solve();
+      return 0;
+  }
