@@ -2,7 +2,6 @@ import optuna
 
 """example
 python3 -m ahclib test -v -c -r
-
 python3 -m opt
 
 g++ ./main.cpp -O2 -std=c++20 -o a.out -I./../../../Library_cpp
@@ -18,6 +17,8 @@ class AHCSettings:
     execute_command = "./a.out"
     input_file_names = [f"./in/{str(i).zfill(4)}.txt" for i in range(100)]
     timeout = None
+
+    pre_dir_name = ""
 
     def get_score(scores: list[float]) -> float:
         return sum(scores) / len(scores)

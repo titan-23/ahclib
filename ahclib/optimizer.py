@@ -7,7 +7,7 @@ import multiprocessing
 from .parallel_tester import ParallelTester, build_tester
 from .ahc_settings import AHCSettings
 from .ahc_util import to_blue, to_bold
-# import optunahub
+import optunahub
 
 logger = getLogger(__name__)
 
@@ -22,7 +22,7 @@ class Optimizer:
             os.makedirs(self.path)
 
     def optimize_wilcoxon(self) -> None:
-        raise NotImplementedError
+        # raise NotImplementedError
         tester: ParallelTester = build_tester(
             self.settings, njobs=self.settings.njobs, verbose=False
         )
@@ -49,6 +49,7 @@ class Optimizer:
             if not state:
                 print("Pruned!")
                 raise optuna.TrialPruned()
+            assert None not in scores
             score = tester.get_score(scores)
             return score
 

@@ -1,5 +1,5 @@
 import multiprocessing.managers
-from typing import Iterable, Callable
+from typing import Iterable, Callable, Optional
 import argparse
 from logging import getLogger, basicConfig
 import subprocess
@@ -13,6 +13,8 @@ import csv
 import optuna
 from functools import partial
 import datetime
+import pandas as pd
+from collections import defaultdict
 from .ahc_settings import AHCSettings
 from .ahc_util import to_green, to_red
 
@@ -20,6 +22,7 @@ logger = getLogger(__name__)
 
 KETA_SCORE = 10
 KETA_TIME = 11
+KETA_REL_SCORE = 10
 
 
 class ParallelTester:
@@ -34,6 +37,7 @@ class ParallelTester:
         verbose: bool,
         get_score: Callable[[list[float]], float],
         timeout: float,
+        pre_dir_name: str,
     ) -> None:
         """
         Args:
@@ -57,6 +61,15 @@ class ParallelTester:
         self.timeout = (
             timeout / 1000 if (timeout is not None) and (timeout >= 0) else None
         )
+        pre_dir_name = os.path.join(
+            *["ahclib_results", "all_tests", pre_dir_name, "result.csv"]
+        )
+        self.pre_data = {}
+        if os.path.exists(pre_dir_name):
+            df = pd.read_csv(pre_dir_name)
+            for _, row in df.iterrows():
+                self.pre_data[row["filename"]] = row["score"]
+
         self.counter: multiprocessing.managers.ValueProxy
 
         self.rnd = Random()
@@ -134,7 +147,7 @@ class ParallelTester:
             logger.error(to_red(f"!!! Error occured in {input_file}"))
             return math.nan
 
-    def run_opt_wilcoxon(self, trial: optuna.trial.Trial) -> list[float]:
+    def run_opt_wilcoxon(self, trial: optuna.trial.Trial) -> list[Optional[float]]:
         self.should_prune: bool = False
         self.scores_list: list[float] = []
 
@@ -154,7 +167,6 @@ class ParallelTester:
             pool.join()
         assert None not in result
         if None in result:
-            result = [s for s in result if s is not None]
             return result, False
         return result, True
 
@@ -236,6 +248,11 @@ class ParallelTester:
                 with lock:
                     self.counter.value += 1
                     cnt = self.counter.value
+                relative_score = (
+                    -1
+                    if input_file not in self.pre_data
+                    else score / self.pre_data[input_file]
+                )
                 cnt = " " * (
                     len(str(len(self.input_file_names))) - len(str(cnt))
                 ) + str(cnt)
@@ -243,8 +260,13 @@ class ParallelTester:
                 s = " " * (KETA_SCORE - len(s)) + s
                 t = f"{(end_time-start_time):.3f} sec"
                 t = " " * (KETA_TIME - len(t)) + t
+                u = (
+                    to_green(f"{(relative_score):.3f}")
+                    if relative_score < 1.0
+                    else to_red(f"{(relative_score):.3f}")
+                )
                 logger.info(
-                    f"| {cnt} / {len(self.input_file_names)} | {input_file} | {s} | {t} |"
+                    f"| {cnt} / {len(self.input_file_names)} | {input_file} | {s} | {t} | {u} |"
                 )
 
             if record:
@@ -296,6 +318,22 @@ class ParallelTester:
             with lock:
                 self.counter.value += 1
             # logger.exception(e)
+
+            if record:
+                # stderr
+                with open(
+                    f"{self.output_dir}/err/{filename}", "w", encoding="utf-8"
+                ) as out_f:
+                    if e.stderr is not None:
+                        out_f.write(e.stderr)
+
+                # stdout
+                with open(
+                    f"{self.output_dir}/out/{filename}", "w", encoding="utf-8"
+                ) as out_f:
+                    if e.stdout is not None:
+                        out_f.write(e.stdout)
+
             logger.error(to_red(f"Error occured in {input_file}"))
             return input_file, math.nan, "ERROR", "-1"
         except Exception as e:
@@ -412,6 +450,7 @@ def build_tester(
         verbose=verbose,
         get_score=settings.get_score,
         timeout=settings.timeout,
+        pre_dir_name=settings.pre_dir_name,
     )
     return tester
 
