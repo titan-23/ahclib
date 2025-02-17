@@ -192,7 +192,12 @@ class ParallelTester:
             score_line = result.stderr.rstrip().split("\n")[-1]
             _, score = score_line.split(" = ")
             score = float(score)
-            return score
+            relative_score = (
+                -1
+                if input_file not in self.pre_data
+                else score / self.pre_data[input_file]
+            )
+            return relative_score
         except subprocess.TimeoutExpired as e:
             logger.error(to_red(f"TLE occured in {input_file}"))
             return math.nan
@@ -481,6 +486,22 @@ def run_test(
     start = time.time()
 
     scores = tester.run_record(record)
+
+    # relative_scores
+    relative_scores = [
+        -1 if filename not in tester.pre_data else score / tester.pre_data[filename]
+        for filename, score, _, _ in scores
+    ]
+    if relative_scores.count(-1):
+        logger.error(to_red(f"RelativeScore::ErrorCount: {relative_scores.count(-1)}."))
+    relative_scores = list(filter(lambda x: x != -1, relative_scores))
+    ave_relative_score = sum(relative_scores) / len(relative_scores)
+    ave_relative_score = (
+        to_green(f"{ave_relative_score:.4f}")
+        if ave_relative_score > 1
+        else to_red(f"{ave_relative_score:.4f}")
+    )
+    logger.info(f"RelativeScore: {ave_relative_score}.")
 
     nan_case = []
     for filename, s, state, _ in scores:
