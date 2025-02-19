@@ -267,7 +267,7 @@ class ParallelTester:
                 t = " " * (KETA_TIME - len(t)) + t
                 u = (
                     to_green(f"{(relative_score):.3f}")
-                    if relative_score < 1.0
+                    if relative_score >= 1.0
                     else to_red(f"{(relative_score):.3f}")
                 )
                 logger.info(
@@ -489,18 +489,32 @@ def run_test(
 
     # relative_scores
     relative_scores = [
-        -1 if filename not in tester.pre_data else score / tester.pre_data[filename]
+        (-1 if filename not in tester.pre_data else score / tester.pre_data[filename])
         for filename, score, _, _ in scores
     ]
     if relative_scores.count(-1):
         logger.error(to_red(f"RelativeScore::ErrorCount: {relative_scores.count(-1)}."))
     relative_scores = list(filter(lambda x: x != -1, relative_scores))
-    ave_relative_score = sum(relative_scores) / len(relative_scores)
+    less_cnt = 0
+    uppe_cnt = 0
+    res = 1
+    for r in relative_scores:
+        if r == -1:
+            continue
+        res *= r
+        if r < 1.0:
+            less_cnt += 1
+        else:
+            uppe_cnt += 1
+    ave_relative_score = (res) ** (1 / (less_cnt + uppe_cnt))
     ave_relative_score = (
         to_green(f"{ave_relative_score:.4f}")
         if ave_relative_score > 1
         else to_red(f"{ave_relative_score:.4f}")
     )
+
+    logger.info(f"LESS : {less_cnt}.")
+    logger.info(f"UPPER: {uppe_cnt}.")
     logger.info(f"RelativeScore: {ave_relative_score}.")
 
     nan_case = []
