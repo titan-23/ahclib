@@ -497,21 +497,24 @@ def run_test(
     relative_scores = list(filter(lambda x: x != -1, relative_scores))
     less_cnt = 0
     uppe_cnt = 0
-    res = 1
+    log_sum = 0
     for r in relative_scores:
         if r == -1:
             continue
-        res *= r
+        log_sum += math.log(r)
         if r < 1.0:
             less_cnt += 1
         else:
             uppe_cnt += 1
-    ave_relative_score = (res) ** (1 / (less_cnt + uppe_cnt))
-    ave_relative_score = (
-        to_green(f"{ave_relative_score:.4f}")
-        if ave_relative_score > 1
-        else to_red(f"{ave_relative_score:.4f}")
-    )
+    if less_cnt + uppe_cnt != 0:
+        ave_relative_score = math.exp(log_sum / (less_cnt + uppe_cnt))
+        ave_relative_score = (
+            to_green(f"{ave_relative_score:.4f}")
+            if ave_relative_score > 1
+            else to_red(f"{ave_relative_score:.4f}")
+        )
+    else:
+        ave_relative_score = to_red("nan")
 
     logger.info(f"LESS : {less_cnt}.")
     logger.info(f"UPPER: {uppe_cnt}.")
