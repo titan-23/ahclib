@@ -1,4 +1,5 @@
 import optuna
+import math
 
 """example
 python3 -m ahclib test -v -c -r
@@ -11,7 +12,7 @@ g++ ./main.cpp -O2 -std=c++20 -o a.out -I./../../../Library_cpp
 class AHCSettings:
 
     # parallel_tester -------------------- #
-    njobs = 127
+    njobs = 100
     filename = "./main.cpp"
     compile_command = "g++ ./main.cpp -O2 -std=c++20 -o a.out -I./../../../Library_cpp"
     execute_command = "./a.out"
@@ -22,6 +23,10 @@ class AHCSettings:
 
     def get_score(scores: list[float]) -> float:
         return sum(scores) / len(scores)
+
+    # def get_score(scores: list[float]) -> float:
+    #     log_sum = sum(math.log(s) for s in scores)
+    #     return math.exp(log_sum / len(scores))
 
     # ------------------------------------ #
 
