@@ -5,7 +5,7 @@ import math
 python3 -m ahclib test -v -c -r
 python3 -m opt
 
-g++ ./main.cpp -O2 -std=c++20 -o a.out -I./../../../Library_cpp
+g++ ./main.cpp -O2 -std=c++20 -o a.out -I./../../../Library_cpp -march=native
 """
 
 
@@ -14,7 +14,7 @@ class AHCSettings:
     # parallel_tester -------------------- #
     njobs = 100
     filename = "./main.cpp"
-    compile_command = "g++ ./main.cpp -O2 -std=c++20 -o a.out -I./../../../Library_cpp"
+    compile_command = "g++ ./main.cpp -O2 -std=c++20 -o a.out -I./../../../Library_cpp -march=native"
     execute_command = "./a.out"
     input_file_names = [f"./in/{str(i).zfill(4)}.txt" for i in range(100)]
     timeout = None
@@ -22,6 +22,7 @@ class AHCSettings:
     pre_dir_name = ""
 
     def get_score(scores: list[float]) -> float:
+        scores = list(filter(lambda x: x is not None, scores))
         return sum(scores) / len(scores)
 
     # def get_score(scores: list[float]) -> float:
