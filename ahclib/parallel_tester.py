@@ -71,10 +71,7 @@ class ParallelTester:
                 self.pre_data[row["filename"]] = row["score"]
 
         self.counter: multiprocessing.managers.ValueProxy
-
-        self.rnd = Random()
-        self.should_prune: bool = False
-        self.scores_list: list[float] = []
+        self.rnd = Random(2521)
 
     def show_score(self, scores: list[float]) -> float:
         """スコアのリストを受け取り、 ``get_score`` 関数で計算します。
@@ -106,12 +103,8 @@ class ParallelTester:
             check=True,
         )
 
-    def _process_file_opt_wilcoxon(self, args) -> float:
-        if self.should_prune:
-            # raise optuna.TrialPruned()
-            return None
-        input_file, id_, lock, trial = args
-        trial: optuna.trial.Trial
+    def _process_file_opt_wilcoxon(self, args: tuple[str, int]) -> tuple[int, float]:
+        input_file, id_ = args
         with open(input_file, "r", encoding="utf-8") as f:
             input_text = "".join(f.read())
         try:
@@ -124,51 +117,38 @@ class ParallelTester:
                 text=True,
                 check=True,
             )
-            with lock:
-                if self.should_prune:
-                    return None
-                score_line = result.stderr.rstrip().split("\n")[-1]
-                _, score = score_line.split(" = ")
-                score = float(score)
-                trial.report(score, id_)
-                if trial.should_prune():
-                    # raise optuna.TrialPruned()
-                    self.should_prune = True
-                    return None
-            return score
+            score_line = result.stderr.rstrip().split("\n")[-1]
+            _, score = score_line.split(" = ")
+            score = float(score)
+            return id_, score
         except subprocess.TimeoutExpired as e:
             logger.error(to_red(f"TLE occured in {input_file}"))
-            return math.nan
+            return id_, math.nan
         except subprocess.CalledProcessError as e:
             logger.error(to_red(f"Error occured in {input_file}"))
-            return math.nan
+            return id_, math.nan
         except Exception as e:
             logger.exception(e)
             logger.error(to_red(f"!!! Error occured in {input_file}"))
-            return math.nan
+            return id_, math.nan
 
     def run_opt_wilcoxon(self, trial: optuna.trial.Trial) -> list[Optional[float]]:
-        self.should_prune: bool = False
-        self.scores_list: list[float] = []
-
+        scores_list: list[float] = [None] * len(self.input_file_names)
         input_filenames = list(enumerate(self.input_file_names))
-        print(len(input_filenames))
         self.rnd.shuffle(input_filenames)
-        with multiprocessing.Manager() as manager:
-            lock = manager.Lock()
-            self.counter = manager.Value("i", 0)
-            pool = multiprocessing.Pool(processes=self.cpu_count)
-            result = pool.map(
+        with multiprocessing.Pool(processes=self.cpu_count) as pool:
+            result_iterator = pool.imap_unordered(
                 self._process_file_opt_wilcoxon,
-                [(file, id_, lock, trial) for id_, file in input_filenames],
+                [(file, id_) for id_, file in input_filenames],
                 chunksize=1,
             )
-            pool.close()
-            pool.join()
-        assert None not in result
-        if None in result:
-            return result, False
-        return result, True
+            for id_, score in result_iterator:
+                trial.report(score, id_)
+                scores_list[id_] = score
+                if trial.should_prune():
+                    break
+            pool.terminate()
+        return scores_list
 
     def _process_file_light(self, input_file: str) -> float:
         """入力`input_file`を処理します。
@@ -192,12 +172,13 @@ class ParallelTester:
             score_line = result.stderr.rstrip().split("\n")[-1]
             _, score = score_line.split(" = ")
             score = float(score)
-            relative_score = (
-                -1
-                if input_file not in self.pre_data
-                else score / self.pre_data[input_file]
-            )
-            return relative_score
+            # relative_score = (
+            #     -1
+            #     if input_file not in self.pre_data
+            #     else score / self.pre_data[input_file]
+            # )
+            # return relative_score
+            return score
         except subprocess.TimeoutExpired as e:
             logger.error(to_red(f"TLE occured in {input_file}"))
             return math.nan

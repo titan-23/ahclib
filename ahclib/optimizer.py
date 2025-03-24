@@ -1,12 +1,13 @@
 import optuna
 import time
+import sys
 from logging import getLogger, basicConfig
 import os
 import subprocess
 import multiprocessing
 from .parallel_tester import ParallelTester, build_tester
 from .ahc_settings import AHCSettings
-from .ahc_util import to_blue, to_bold
+from .ahc_util import to_blue, to_bold, to_green
 import optunahub
 
 logger = getLogger(__name__)
@@ -23,18 +24,18 @@ class Optimizer:
 
     def optimize_wilcoxon(self) -> None:
         # raise NotImplementedError
-        tester: ParallelTester = build_tester(
-            self.settings, njobs=self.settings.njobs, verbose=False
-        )
-        tester.compile()
+        logger.info(f"==============================================")
+        logger.info(to_bold(to_blue(f"Optimizer settings:")))
+        logger.info(f"- study_name    : {to_bold(self.settings.study_name)}")
+        logger.info(f"- direction     : {to_bold(self.settings.direction)}")
+        logger.info(f"- n_trials      : {to_bold(self.settings.n_trials)}")
+
         start = time.time()
 
-        study: optuna.Study = optuna.create_study(
-            direction=self.settings.direction,
-            study_name=self.settings.study_name,
-            storage=f"sqlite:///{self.path}/{self.settings.study_name}.db",
-            load_if_exists=True,
-            pruner=optuna.pruners.WilcoxonPruner(p_threshold=0.1),
+        tester: ParallelTester = build_tester(
+            self.settings,
+            njobs=self.settings.njobs,
+            verbose=False,
         )
 
         def _objective(trial: optuna.trial.Trial) -> float:
@@ -45,24 +46,63 @@ class Optimizer:
             )
             args = self.settings.objective(trial)
             tester.append_execute_command(args)
-            scores, state = tester.run_opt_wilcoxon(trial)
-            if not state:
-                print("Pruned!")
-                raise optuna.TrialPruned()
-            assert None not in scores
+            scores = tester.run_opt_wilcoxon(trial)
+            if None in scores:
+                pruned_cnt = len(scores) - scores.count(None)
+                logger.info(to_green(f"pruned ! | {str(pruned_cnt).zfill(len(str(int(len(scores)))))} / {len(scores)}"))
             score = tester.get_score(scores)
             return score
 
-        study.optimize(
-            _objective,
-            n_trials=self.settings.n_trials,
-            n_jobs=min(self.settings.njobs_optuna, multiprocessing.cpu_count() - 1),
+        storage = f"sqlite:///{self.path}/data.db"
+        print(storage)
+        study: optuna.Study = optuna.create_study(
+            direction=self.settings.direction,
+            study_name=self.settings.study_name,
+            storage=storage,
+            load_if_exists=True,
+            pruner=optuna.pruners.WilcoxonPruner(p_threshold=0.1),
         )
 
-        logger.info(study.best_trial)
-        logger.info("writing results ...")
-        self.output_study(study)
-        logger.info(f"Finish parameter seraching. Time: {time.time() - start:.2f}sec.")
+        try:
+            logger.info(f"------------------------------------------")
+            process = subprocess.Popen(
+                ["optuna-dashboard", storage],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+
+            dashboard_url = None
+            for line in iter(process.stderr.readline, ""):
+                if line.startswith("Listening on "):
+                    dashboard_url = line.split("Listening on")[-1].strip()
+                    break
+            if dashboard_url:
+                logger.info(f"- dashboard URL : {to_bold(dashboard_url)}")
+            else:
+                logger.error("Dashboard URL could not be determined.")
+                exit(1)
+            logger.info(f"==============================================")
+
+            tester.compile()
+            study.optimize(
+                _objective,
+                n_trials=self.settings.n_trials,
+                n_jobs=min(self.settings.njobs_optuna, multiprocessing.cpu_count() - 1),
+            )
+
+            logger.info(study.best_trial)
+            logger.info("writing results ...")
+            self.output_study(study)
+            logger.info(
+                f"Finish parameter seraching. Time: {time.time() - start:.2f}sec."
+            )
+        except Exception as e:
+            print(e)
+            exit(1)
+        process.terminate()
+        process.wait()
 
     def optimize(self) -> None:
         logger.info(f"==============================================")

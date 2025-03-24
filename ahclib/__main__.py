@@ -1,4 +1,5 @@
 from .parallel_tester import run_test
+from .ahc_util import to_bold, to_blue
 from .optimizer import run_optimizer, run_optimizer_wilcoxon
 import sys
 import importlib.util
@@ -92,8 +93,7 @@ if __name__ == "__main__":
         run_test(settings, settings.njobs, args.verbose, args.compile, args.record)
     elif args.command == "opt":
         if args.wilcoxon:
-            print(f"--wilcoxon option has not been implemented yet.", file=sys.stderr)
-            raise NotImplementedError
+            print(f"{to_blue(to_blue("wilcoxon option has been set."))}", file=sys.stderr)
             run_optimizer_wilcoxon(settings)
         else:
             run_optimizer(settings)
