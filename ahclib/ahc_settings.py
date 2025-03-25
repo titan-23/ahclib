@@ -3,7 +3,7 @@ import math
 
 """example
 python3 -m ahclib test -v -c -r
-python3 -m opt
+python3 -m opt -w
 
 g++ ./main.cpp -O2 -std=c++20 -o a.out -I./../../../Library_cpp -march=native
 """
