@@ -23,7 +23,9 @@ class Optimizer:
         if not os.path.exists(self.path):
             os.makedirs(self.path)
 
-    def optimize(self, sampler: Optional[str]=None, pruner: Optional[str]=None) -> None:
+    def optimize(
+        self, sampler: Optional[str] = None, pruner: Optional[str] = None
+    ) -> None:
         logger.info(f"==============================================")
         logger.info(to_bold(to_blue(f"Optimizer settings:")))
         logger.info(f"- study_name    : {to_bold(self.settings.study_name)}")
@@ -57,7 +59,11 @@ class Optimizer:
             scores = tester.run_opt_wilcoxon(trial)
             if None in scores:
                 pruned_cnt = len(scores) - scores.count(None)
-                logger.info(to_green(f"pruned ! | {str(pruned_cnt).zfill(len(str(int(len(scores)))))} / {len(scores)}"))
+                logger.info(
+                    to_green(
+                        f"pruned ! | {str(pruned_cnt).zfill(len(str(int(len(scores)))))} / {len(scores)}"
+                    )
+                )
             score = tester.get_score(scores)
             return score
 
@@ -65,11 +71,11 @@ class Optimizer:
         _objective: Callable[[optuna.trial.Trial], float] = _objective
 
         if sampler == "auto_sampler":
-            logger.info(f"- sampler       : {to_bold("auto_sampler")}")
+            logger.info(f"- sampler       : {to_bold(sampler)}")
             sampler = optunahub.load_module("samplers/auto_sampler").AutoSampler()
 
         if pruner == "WilcoxonPruner":
-            logger.info(f"- pruner        : {to_bold("WilcoxonPruner")}")
+            logger.info(f"- pruner        : {to_bold(pruner)}")
             pruner = optuna.pruners.WilcoxonPruner(p_threshold=0.1)
             _objective = _objective_wilcoxon_pruner
 
@@ -157,6 +163,7 @@ class Optimizer:
         fig = optuna.visualization.plot_slice(study)
         fig.write_html(os.path.join(img_path, "slice.html"))
         fig.write_image(os.path.join(img_path, "slice.png"))
+
 
 def run_optimizer(settings: AHCSettings, sampler=None, pruner=None) -> None:
     basicConfig(
