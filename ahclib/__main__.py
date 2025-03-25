@@ -61,6 +61,13 @@ if __name__ == "__main__":
         default=False,
         action="store_true",
     )
+    parser.add_argument(
+        "-a",
+        "--auto_sampler",
+        required=False,
+        default=False,
+        action="store_true",
+    )
 
     args = parser.parse_args()
     if args.command == "setup":
@@ -96,8 +103,10 @@ if __name__ == "__main__":
         pruner = None
         if args.wilcoxon:
             print(to_blue(to_blue("wilcoxon option has been set.")), file=sys.stderr)
-            sampler = "auto_sampler"
             pruner = "WilcoxonPruner"
+        if args.auto_sampler:
+            print(to_blue(to_blue("auto_sampler option has been set.")), file=sys.stderr)
+            sampler = "auto_sampler"
         run_optimizer(settings, sampler, pruner)
     else:
         raise ValueError
