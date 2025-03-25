@@ -1,6 +1,7 @@
 import optuna
 import time
 import sys
+from typing import Optional, Callable
 from logging import getLogger, basicConfig
 import os
 import subprocess
@@ -22,89 +23,7 @@ class Optimizer:
         if not os.path.exists(self.path):
             os.makedirs(self.path)
 
-    def optimize_wilcoxon(self) -> None:
-        # raise NotImplementedError
-        logger.info(f"==============================================")
-        logger.info(to_bold(to_blue(f"Optimizer settings:")))
-        logger.info(f"- study_name    : {to_bold(self.settings.study_name)}")
-        logger.info(f"- direction     : {to_bold(self.settings.direction)}")
-        logger.info(f"- n_trials      : {to_bold(self.settings.n_trials)}")
-
-        start = time.time()
-
-        tester: ParallelTester = build_tester(
-            self.settings,
-            njobs=self.settings.njobs,
-            verbose=False,
-        )
-
-        def _objective(trial: optuna.trial.Trial) -> float:
-            tester: ParallelTester = build_tester(
-                self.settings,
-                njobs=self.settings.njobs,
-                verbose=False,
-            )
-            args = self.settings.objective(trial)
-            tester.append_execute_command(args)
-            scores = tester.run_opt_wilcoxon(trial)
-            if None in scores:
-                pruned_cnt = len(scores) - scores.count(None)
-                logger.info(to_green(f"pruned ! | {str(pruned_cnt).zfill(len(str(int(len(scores)))))} / {len(scores)}"))
-            score = tester.get_score(scores)
-            return score
-
-        storage = f"sqlite:///{self.path}/data.db"
-        print(storage)
-        study: optuna.Study = optuna.create_study(
-            direction=self.settings.direction,
-            study_name=self.settings.study_name,
-            storage=storage,
-            load_if_exists=True,
-            pruner=optuna.pruners.WilcoxonPruner(p_threshold=0.1),
-        )
-
-        try:
-            logger.info(f"------------------------------------------")
-            process = subprocess.Popen(
-                ["optuna-dashboard", storage],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1,
-            )
-
-            dashboard_url = None
-            for line in iter(process.stderr.readline, ""):
-                if line.startswith("Listening on "):
-                    dashboard_url = line.split("Listening on")[-1].strip()
-                    break
-            if dashboard_url:
-                logger.info(f"- dashboard URL : {to_bold(dashboard_url)}")
-            else:
-                logger.error("Dashboard URL could not be determined.")
-                exit(1)
-            logger.info(f"==============================================")
-
-            tester.compile()
-            study.optimize(
-                _objective,
-                n_trials=self.settings.n_trials,
-                n_jobs=min(self.settings.njobs_optuna, multiprocessing.cpu_count() - 1),
-            )
-
-            logger.info(study.best_trial)
-            logger.info("writing results ...")
-            self.output_study(study)
-            logger.info(
-                f"Finish parameter seraching. Time: {time.time() - start:.2f}sec."
-            )
-        except Exception as e:
-            print(e)
-            exit(1)
-        process.terminate()
-        process.wait()
-
-    def optimize(self) -> None:
+    def optimize(self, sampler: Optional[str]=None, pruner: Optional[str]=None) -> None:
         logger.info(f"==============================================")
         logger.info(to_bold(to_blue(f"Optimizer settings:")))
         logger.info(f"- study_name    : {to_bold(self.settings.study_name)}")
@@ -127,13 +46,40 @@ class Optimizer:
             score = tester.get_score(scores)
             return score
 
+        def _objective_wilcoxon_pruner(trial: optuna.trial.Trial) -> float:
+            tester: ParallelTester = build_tester(
+                self.settings,
+                njobs=self.settings.njobs,
+                verbose=False,
+            )
+            args = self.settings.objective(trial)
+            tester.append_execute_command(args)
+            scores = tester.run_opt_wilcoxon(trial)
+            if None in scores:
+                pruned_cnt = len(scores) - scores.count(None)
+                logger.info(to_green(f"pruned ! | {str(pruned_cnt).zfill(len(str(int(len(scores)))))} / {len(scores)}"))
+            score = tester.get_score(scores)
+            return score
+
         storage = f"sqlite:///{self.path}/data.db"
+        _objective: Callable[[optuna.trial.Trial], float] = _objective
+
+        if sampler == "auto_sampler":
+            logger.info(f"- sampler       : {to_bold("auto_sampler")}")
+            sampler = optunahub.load_module("samplers/auto_sampler").AutoSampler()
+
+        if pruner == "WilcoxonPruner":
+            logger.info(f"- pruner        : {to_bold("WilcoxonPruner")}")
+            pruner = optuna.pruners.WilcoxonPruner(p_threshold=0.1)
+            _objective = _objective_wilcoxon_pruner
+
         study: optuna.Study = optuna.create_study(
             direction=self.settings.direction,
             study_name=self.settings.study_name,
             storage=storage,
             load_if_exists=True,
-            # sampler=optunahub.load_module("samplers/auto_sampler").AutoSampler(),
+            sampler=sampler,
+            pruner=pruner,
         )
 
         try:
@@ -212,27 +158,14 @@ class Optimizer:
         fig.write_html(os.path.join(img_path, "slice.html"))
         fig.write_image(os.path.join(img_path, "slice.png"))
 
-
-def run_optimizer(settings: AHCSettings):
+def run_optimizer(settings: AHCSettings, sampler=None, pruner=None) -> None:
     basicConfig(
         format="%(asctime)s [%(levelname)s] : %(message)s",
         datefmt="%H:%M:%S",
         level=os.getenv("LOG_LEVEL", "INFO"),
     )
-
     optimizer: Optimizer = Optimizer(settings)
-    optimizer.optimize()
-
-
-def run_optimizer_wilcoxon(settings: AHCSettings):
-    basicConfig(
-        format="%(asctime)s [%(levelname)s] : %(message)s",
-        datefmt="%H:%M:%S",
-        level=os.getenv("LOG_LEVEL", "INFO"),
-    )
-
-    optimizer: Optimizer = Optimizer(settings)
-    optimizer.optimize_wilcoxon()
+    optimizer.optimize(sampler, pruner)
 
 
 if __name__ == "__main__":
