@@ -71,7 +71,7 @@ class ParallelTester:
                 self.pre_data[row["filename"]] = row["score"]
 
         self.counter: multiprocessing.managers.ValueProxy
-        self.rnd = Random(2521)
+        self.rnd = Random(None)
 
     def show_score(self, scores: list[float]) -> float:
         """スコアのリストを受け取り、 ``get_score`` 関数で計算します。
