@@ -95,7 +95,7 @@ if __name__ == "__main__":
         sampler = None
         pruner = None
         if args.wilcoxon:
-            print(f"{to_blue(to_blue("wilcoxon option has been set."))}", file=sys.stderr)
+            print(to_blue(to_blue("wilcoxon option has been set.")), file=sys.stderr)
             sampler = "auto_sampler"
             pruner = "WilcoxonPruner"
         run_optimizer(settings, sampler, pruner)
