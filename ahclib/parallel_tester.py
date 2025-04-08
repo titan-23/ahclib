@@ -120,6 +120,12 @@ class ParallelTester:
             score_line = result.stderr.rstrip().split("\n")[-1]
             _, score = score_line.split(" = ")
             score = float(score)
+            # relative_score = (
+            #     -1
+            #     if input_file not in self.pre_data
+            #     else score / self.pre_data[input_file]
+            # )
+            # return id_, relative_score
             return id_, score
         except subprocess.TimeoutExpired as e:
             logger.error(to_red(f"TLE occured in {input_file}"))
@@ -248,7 +254,7 @@ class ParallelTester:
                 t = " " * (KETA_TIME - len(t)) + t
                 u = (
                     to_green(f"{(relative_score):.3f}")
-                    if relative_score >= 1.0
+                    if relative_score < 1.0
                     else to_red(f"{(relative_score):.3f}")
                 )
                 logger.info(
@@ -475,7 +481,7 @@ def run_test(
     ]
     if relative_scores.count(-1):
         logger.error(to_red(f"RelativeScore::ErrorCount: {relative_scores.count(-1)}."))
-    relative_scores = list(filter(lambda x: x != -1, relative_scores))
+    relative_scores = list(filter(lambda x: not math.isnan(x), relative_scores))
     less_cnt = 0
     uppe_cnt = 0
     log_sum = 0
@@ -491,7 +497,7 @@ def run_test(
         ave_relative_score = math.exp(log_sum / (less_cnt + uppe_cnt))
         ave_relative_score = (
             to_green(f"{ave_relative_score:.4f}")
-            if ave_relative_score > 1
+            if ave_relative_score < 1
             else to_red(f"{ave_relative_score:.4f}")
         )
     else:
