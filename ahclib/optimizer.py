@@ -1,6 +1,5 @@
 import optuna
 import time
-import sys
 from typing import Optional, Callable
 from logging import getLogger, basicConfig
 import os

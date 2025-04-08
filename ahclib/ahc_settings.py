@@ -14,7 +14,9 @@ class AHCSettings:
     # parallel_tester -------------------- #
     njobs = 100
     filename = "./main.cpp"
-    compile_command = "g++ ./main.cpp -O2 -std=c++20 -o a.out -I./../../../Library_cpp -march=native"
+    compile_command = (
+        "g++ ./main.cpp -O2 -std=c++20 -o a.out -I./../../../Library_cpp -march=native"
+    )
     execute_command = "./a.out"
     input_file_names = [f"./in/{str(i).zfill(4)}.txt" for i in range(100)]
     timeout = None
@@ -39,7 +41,7 @@ class AHCSettings:
     direction = "minimize"
 
     # optuna の試行回数
-    n_trials = 50
+    n_trials = 100
 
     # optuna の cpu_count
     njobs_optuna = 1
