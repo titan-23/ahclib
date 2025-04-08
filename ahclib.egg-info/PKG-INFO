@@ -1,4 +1,4 @@
-Metadata-Version: 2.4
+Metadata-Version: 2.1
 Name: ahclib
 Version: 0.1.0
 Summary: Parallel Execution and Optuna Optimization Tools for AHC
@@ -10,16 +10,6 @@ Keywords: AtCoder,AHC,heuristic
 Requires-Python: >=3.10
 Description-Content-Type: text/x-rst
 License-File: LICENSE
-Dynamic: author
-Dynamic: author-email
-Dynamic: description
-Dynamic: description-content-type
-Dynamic: home-page
-Dynamic: keywords
-Dynamic: license
-Dynamic: license-file
-Dynamic: requires-python
-Dynamic: summary
 
 AHC Lib
 ===========
