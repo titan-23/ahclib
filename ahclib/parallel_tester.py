@@ -9,12 +9,12 @@ import math
 import os
 from random import Random
 import shutil
+import sys
 import csv
 import optuna
 from functools import partial
 import datetime
 import pandas as pd
-from collections import defaultdict
 from .ahc_settings import AHCSettings
 from .ahc_util import to_green, to_red
 
@@ -29,18 +29,21 @@ class ParallelTester:
 
     def __init__(
         self,
+        direction: str,
         filename: str,
         compile_command: str,
         execute_command: str,
         input_file_names: list[str],
         cpu_count: int,
         verbose: bool,
-        get_score: Callable[[list[float]], float],
+        get_score: Callable[[list[Optional[float]]], float],
         timeout: float,
+        use_relative_score: bool,
         pre_dir_name: str,
     ) -> None:
         """
         Args:
+            direction (str): 最小化か最大化を決定します(色がつきます)。
             compile_command (str): コンパイルコマンドです。
             execute_command (str): 実行コマンドです。
                                     実行時引数は ``append_execute_command()`` メソッドで指定することも可能です。
@@ -50,6 +53,12 @@ class ParallelTester:
             get_score (Callable[[list[float]], float]): スコアのリストに対して平均などを取って返してください。
             timeout (float): [ms]
         """
+        if direction != "minimize" and direction != "maximize":
+            logger.critical(
+                f"direction must be `minimize` or `maximize` but got {direction}."
+            )
+            sys.exit(1)
+        self.direction = direction
         self.filename = filename
         self.compile_command = compile_command.split()
         self.execute_command = execute_command.split()
@@ -61,6 +70,7 @@ class ParallelTester:
         self.timeout = (
             timeout / 1000 if (timeout is not None) and (timeout >= 0) else None
         )
+        self.use_relative_score = use_relative_score
         pre_dir_name = os.path.join(
             *["ahclib_results", "all_tests", pre_dir_name, "result.csv"]
         )
@@ -120,12 +130,12 @@ class ParallelTester:
             score_line = result.stderr.rstrip().split("\n")[-1]
             _, score = score_line.split(" = ")
             score = float(score)
-            # relative_score = (
-            #     -1
-            #     if input_file not in self.pre_data
-            #     else score / self.pre_data[input_file]
-            # )
-            # return id_, relative_score
+            if self.use_relative_score:
+                score = (
+                    -1
+                    if input_file not in self.pre_data
+                    else score / self.pre_data[input_file]
+                )
             return id_, score
         except subprocess.TimeoutExpired as e:
             logger.error(to_red(f"TLE occured in {input_file}"))
@@ -178,12 +188,12 @@ class ParallelTester:
             score_line = result.stderr.rstrip().split("\n")[-1]
             _, score = score_line.split(" = ")
             score = float(score)
-            # relative_score = (
-            #     -1
-            #     if input_file not in self.pre_data
-            #     else score / self.pre_data[input_file]
-            # )
-            # return relative_score
+            if self.use_relative_score:
+                score = (
+                    -1
+                    if input_file not in self.pre_data
+                    else score / self.pre_data[input_file]
+                )
             return score
         except subprocess.TimeoutExpired as e:
             logger.error(to_red(f"TLE occured in {input_file}"))
@@ -252,14 +262,28 @@ class ParallelTester:
                 s = " " * (KETA_SCORE - len(s)) + s
                 t = f"{(end_time-start_time):.3f} sec"
                 t = " " * (KETA_TIME - len(t)) + t
-                u = (
-                    to_green(f"{(relative_score):.3f}")
-                    if relative_score < 1.0
-                    else to_red(f"{(relative_score):.3f}")
-                )
-                logger.info(
-                    f"| {cnt} / {len(self.input_file_names)} | {input_file} | {s} | {t} | {u} |"
-                )
+                u = ""
+                if self.direction == "minimize":
+                    u = (
+                        to_green(f"{(relative_score):.3f}")
+                        if relative_score < 1.0
+                        else to_red(f"{(relative_score):.3f}")
+                    )
+                else:
+                    u = (
+                        to_green(f"{(relative_score):.3f}")
+                        if relative_score > 1.0
+                        else to_red(f"{(relative_score):.3f}")
+                    )
+
+                if self.use_relative_score:
+                    logger.info(
+                        f"| {cnt} / {len(self.input_file_names)} | {input_file} | {s} | {t} | {u} |"
+                    )
+                else:
+                    logger.info(
+                        f"| {cnt} / {len(self.input_file_names)} | {input_file} | {s} | {t} |"
+                    )
 
             if record:
                 # stderr
@@ -274,7 +298,13 @@ class ParallelTester:
                 ) as out_f:
                     out_f.write(result.stdout)
 
-            return input_file, score, "AC", f"{(end_time-start_time):.3f}"
+            return (
+                input_file,
+                score,
+                relative_score,
+                "AC",
+                f"{(end_time-start_time):.3f}",
+            )
         except subprocess.TimeoutExpired as e:
             if self.verbose:
                 with lock:
@@ -305,7 +335,7 @@ class ParallelTester:
                     if e.stdout is not None:
                         out_f.write(e.stdout.decode("utf-8"))
 
-            return input_file, math.nan, "TLE", f"{self.timeout:.3f}"
+            return input_file, math.nan, math.nan, "TLE", f"{self.timeout:.3f}"
         except subprocess.CalledProcessError as e:
             with lock:
                 self.counter.value += 1
@@ -327,14 +357,14 @@ class ParallelTester:
                         out_f.write(e.stdout)
 
             logger.error(to_red(f"Error occured in {input_file}"))
-            return input_file, math.nan, "ERROR", "-1"
+            return input_file, math.nan, math.nan, "ERROR", "-1"
         except Exception as e:
             with lock:
                 self.counter.value += 1
             logger.exception(e)
             logger.error(to_red(f"!!! Error occured in {input_file}"))
             self.counter
-            return input_file, math.nan, "INNER_ERROR", "-1"
+            return input_file, math.nan, math.nan, "INNER_ERROR", "-1"
 
     def run_record(self, record: bool) -> list[tuple[str, float]]:
         """実行します。"""
@@ -380,9 +410,15 @@ class ParallelTester:
             f"{self.output_dir}/result.csv", "w", encoding="utf-8", newline=""
         ) as f:
             writer = csv.writer(f)
-            writer.writerow(["filename", "score", "state", "time"])
-            for filename, score, state, t in result:
-                writer.writerow([filename, score, state, t])
+            if self.use_relative_score:
+                writer.writerow(["filename", "score", "rel_score", "state", "time"])
+            else:
+                writer.writerow(["filename", "score", "state", "time"])
+            for filename, score, rel_score, state, t in result:
+                if self.use_relative_score:
+                    writer.writerow([filename, score, rel_score, state, t])
+                else:
+                    writer.writerow([filename, score, state, t])
 
         if record:
             # 出力を`./out/`へも書き出す
@@ -434,6 +470,7 @@ def build_tester(
         ParallelTester: テスターです。
     """
     tester = ParallelTester(
+        direction=settings.direction,
         filename=settings.filename,
         compile_command=settings.compile_command,
         execute_command=settings.execute_command,
@@ -442,6 +479,7 @@ def build_tester(
         verbose=verbose,
         get_score=settings.get_score,
         timeout=settings.timeout,
+        use_relative_score=settings.use_relative_score,
         pre_dir_name=settings.pre_dir_name,
     )
     return tester
@@ -474,41 +512,52 @@ def run_test(
 
     scores = tester.run_record(record)
 
-    # relative_scores
-    relative_scores = [
-        (-1 if filename not in tester.pre_data else score / tester.pre_data[filename])
-        for filename, score, _, _ in scores
-    ]
-    if relative_scores.count(-1):
-        logger.error(to_red(f"RelativeScore::ErrorCount: {relative_scores.count(-1)}."))
-    relative_scores = list(filter(lambda x: not math.isnan(x), relative_scores))
-    less_cnt = 0
-    uppe_cnt = 0
-    log_sum = 0
-    for r in relative_scores:
-        if r == -1:
-            continue
-        log_sum += math.log(r)
-        if r < 1.0:
-            less_cnt += 1
+    if settings.use_relative_score:
+        relative_scores = [r for _, _, r, _, _ in scores]
+        if relative_scores.count(-1):
+            logger.error(
+                to_red(f"RelativeScore::ErrorCount: {relative_scores.count(-1)}.")
+            )
+        relative_scores = list(filter(lambda x: not math.isnan(x), relative_scores))
+        less_cnt, uppe_cnt = 0, 0
+        log_sum = 0
+        for r in relative_scores:
+            if r == -1:
+                continue
+            log_sum += math.log(r)
+            if r < 1.0:
+                less_cnt += 1
+            else:
+                uppe_cnt += 1
+        if less_cnt + uppe_cnt != 0:
+            ave_relative_score = math.exp(log_sum / (less_cnt + uppe_cnt))
+            if settings.direction == "minimize":
+                ave_relative_score = (
+                    to_green(f"{ave_relative_score:.4f}")
+                    if ave_relative_score < 1
+                    else to_red(f"{ave_relative_score:.4f}")
+                )
+            else:
+                ave_relative_score = (
+                    to_green(f"{ave_relative_score:.4f}")
+                    if ave_relative_score > 1
+                    else to_red(f"{ave_relative_score:.4f}")
+                )
         else:
-            uppe_cnt += 1
-    if less_cnt + uppe_cnt != 0:
-        ave_relative_score = math.exp(log_sum / (less_cnt + uppe_cnt))
-        ave_relative_score = (
-            to_green(f"{ave_relative_score:.4f}")
-            if ave_relative_score < 1
-            else to_red(f"{ave_relative_score:.4f}")
-        )
-    else:
-        ave_relative_score = to_red("nan")
+            ave_relative_score = to_red("nan")
 
-    logger.info(f"LESS : {less_cnt}.")
-    logger.info(f"UPPER: {uppe_cnt}.")
-    logger.info(f"RelativeScore: {ave_relative_score}.")
+        less_cnt = (
+            to_green(less_cnt) if settings.direction == "minimize" else to_red(less_cnt)
+        )
+        uppe_cnt = (
+            to_red(uppe_cnt) if settings.direction == "minimize" else to_green(uppe_cnt)
+        )
+        logger.info(f"LESS : {less_cnt}.")
+        logger.info(f"UPPER: {uppe_cnt}.")
+        logger.info(f"RelativeScore: {ave_relative_score}.")
 
     nan_case = []
-    for filename, s, state, _ in scores:
+    for filename, s, _, state, _ in scores:
         if math.isnan(s):
             nan_case.append((filename, state))
     if nan_case:
@@ -551,7 +600,7 @@ def run_test(
         logger.error(to_red(f" Other : {other_cnt} "))
         logger.error(to_red(f" Inner : {inner_cnt} "))
 
-    score = tester.show_score([s for _, s, _, _ in scores])
+    score = tester.show_score([s for _, s, _, _, _ in scores])
     logger.info(to_green(f"Finished in {time.time() - start:.4f} sec."))
     return score
 

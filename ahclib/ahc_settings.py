@@ -1,5 +1,7 @@
 import optuna
-import math
+from typing import Optional, Callable
+from ahclib.ahc_util import avg_score, geo_score
+
 
 """example
 python3 -m ahclib test -v -c -r
@@ -12,33 +14,34 @@ g++ ./main.cpp -O2 -std=c++20 -o a.out -I./../../../Library_cpp -march=native
 class AHCSettings:
 
     # parallel_tester -------------------- #
+    direction = "minimize"  # minimize / maximize
+
     njobs = 100
+
     filename = "./main.cpp"
     compile_command = (
         "g++ ./main.cpp -O2 -std=c++20 -o a.out -I./../../../Library_cpp -march=native"
     )
     execute_command = "./a.out"
     input_file_names = [f"./in/{str(i).zfill(4)}.txt" for i in range(100)]
+
     timeout = None
 
+    use_relative_score = False
     pre_dir_name = ""
 
-    def get_score(scores: list[float]) -> float:
+    def get_score(scores: list[Optional[float]]) -> float:
+        # assert None not in scores
+        # return avg_score(scores)
+        # return geo_score(socres)
         scores = list(filter(lambda x: x is not None, scores))
         return sum(scores) / len(scores)
-
-    # def get_score(scores: list[float]) -> float:
-    #     log_sum = sum(math.log(s) for s in scores)
-    #     return math.exp(log_sum / len(scores))
 
     # ------------------------------------ #
 
     # optimizer -------------------------- #
     # study_name
     study_name = "test"
-
-    # direction: minimize / maximize
-    direction = "minimize"
 
     # optuna の試行回数
     n_trials = 100
