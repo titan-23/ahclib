@@ -163,7 +163,6 @@ class ParallelTester:
                 scores_list[id_] = score
                 if trial.should_prune():
                     break
-            pool.terminate()
         return scores_list
 
     def _process_file_light(self, input_file: str) -> float:
