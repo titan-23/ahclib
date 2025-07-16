@@ -257,7 +257,7 @@ class ParallelTester:
                 cnt = " " * (
                     len(str(len(self.input_file_names))) - len(str(cnt))
                 ) + str(cnt)
-                s = str(score)
+                s = str(f"{score:.3f}")
                 s = " " * (KETA_SCORE - len(s)) + s
                 t = f"{(end_time-start_time):.3f} sec"
                 t = " " * (KETA_TIME - len(t)) + t
