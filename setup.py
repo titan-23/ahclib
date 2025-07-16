@@ -15,4 +15,6 @@ setup(
     install_requires=[],
     python_requires=">=3.10",
     keywords=["AtCoder", "AHC", "heuristic"],
+    include_package_data=True,
+    package_data={"ahclib": ["assets/*"]},
 )

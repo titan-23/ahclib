@@ -7,6 +7,8 @@ from dash.dependencies import Input, Output, State
 
 BASE_PATH = "ahclib_results/all_tests"
 FILE_NAME = "result.csv"
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+ASSETS_PATH = os.path.join(CURRENT_DIR, "assets/")
 
 
 def format_timestamp(ts):
@@ -64,7 +66,8 @@ def load_err_out_files(timestamp):
     return err_files, out_files
 
 
-app = Dash(__name__)
+app = Dash(__name__, assets_folder=ASSETS_PATH)
+
 
 app.layout = html.Div(
     [
