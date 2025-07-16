@@ -1,0 +1,17 @@
+.code-block {
+    background-color: #f6f8fa;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    padding: 10px;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    max-height: 265px;
+    overflow-y: auto;
+}
+
+.dash-table-container .dash-cell div {
+    user-select: text;
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+}

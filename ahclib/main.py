@@ -6,6 +6,7 @@ import importlib.util
 import argparse
 import shutil
 from logging import basicConfig
+import subprocess
 import os
 import click
 
@@ -25,7 +26,7 @@ def get_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "command",
-        choices=["setup", "test", "opt", "clear"],
+        choices=["setup", "vis", "test", "opt", "clear"],
         help="",
     )
     parser.add_argument(
@@ -75,6 +76,12 @@ def get_args() -> argparse.Namespace:
 
 def main():
     args = get_args()
+
+    if args.command == "vis":
+        from . import vis
+
+        vis.app.run(debug=False)
+        sys.exit(0)
 
     if args.command == "setup":
         print("setup", file=sys.stderr)
