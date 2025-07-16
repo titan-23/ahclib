@@ -7,6 +7,7 @@ import argparse
 import shutil
 from logging import basicConfig
 import os
+import click
 
 
 def load_class_from_path(file_path, class_name=None):
@@ -24,7 +25,7 @@ def get_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "command",
-        choices=["setup", "test", "opt"],
+        choices=["setup", "test", "opt", "clear"],
         help="",
     )
     parser.add_argument(
@@ -90,6 +91,19 @@ def main():
         except Exception as e:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
+        sys.exit(0)
+
+    if args.command == "clear":
+        print("clear", file=sys.stderr)
+        if click.confirm("Delete the directory ./ahclib_results/?"):
+            try:
+                shutil.rmtree("./ahclib_results/")
+            except Exception as e:
+                print(f"Error occurred: {e}", file=sys.stderr)
+            else:
+                print("Directory removed successfully.", file=sys.stderr)
+        else:
+            print("Deletion cancelled.", file=sys.stderr)
         sys.exit(0)
 
     file_path = args.settings
