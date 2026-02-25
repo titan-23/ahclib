@@ -12,7 +12,6 @@ import shutil
 import sys
 import csv
 import optuna
-from functools import partial
 import datetime
 import pandas as pd
 from .ahc_settings import AHCSettings
@@ -23,6 +22,209 @@ logger = getLogger(__name__)
 KETA_SCORE = 10
 KETA_TIME = 11
 KETA_REL_SCORE = 10
+
+worker_lock = None
+worker_counter = None
+
+def init_worker(lock, counter):
+    """各ワーカープロセスの初期化時に呼ばれ、LockとCounterをセットします。"""
+    global worker_lock, worker_counter
+    worker_lock = lock
+    worker_counter = counter
+
+
+def worker_process_file_opt_wilcoxon(args) -> tuple[int, float]:
+    input_file, id_, cmd, timeout, use_relative_score, pre_data = args
+    with open(input_file, "r", encoding="utf-8") as f:
+        input_text = f.read()
+    try:
+        result = subprocess.run(
+            cmd,
+            stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            input=input_text,
+            timeout=timeout,
+            text=True,
+            check=True,
+        )
+        score_line = result.stderr.rstrip().split("\n")[-1]
+        _, score = score_line.split(" = ")
+        score = float(score)
+        if use_relative_score:
+            score = -1 if input_file not in pre_data else score / pre_data[input_file]
+        return id_, score
+    except subprocess.TimeoutExpired:
+        logger.error(to_red(f"TLE occured in {input_file}"))
+        return id_, math.nan
+    except subprocess.CalledProcessError:
+        logger.error(to_red(f"Error occured in {input_file}"))
+        return id_, math.nan
+    except Exception as e:
+        logger.exception(e)
+        logger.error(to_red(f"!!! Error occured in {input_file}"))
+        return id_, math.nan
+
+
+def worker_process_file_light(args) -> float:
+    """入力`input_file`を処理します（軽量版）。"""
+    input_file, cmd, timeout, use_relative_score, pre_data = args
+    with open(input_file, "r", encoding="utf-8") as f:
+        input_text = f.read()
+    try:
+        result = subprocess.run(
+            cmd,
+            input=input_text,
+            timeout=timeout,
+            stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+        score_line = result.stderr.rstrip().split("\n")[-1]
+        _, score = score_line.split(" = ")
+        score = float(score)
+        if use_relative_score:
+            score = -1 if input_file not in pre_data else score / pre_data[input_file]
+        return score
+    except subprocess.TimeoutExpired:
+        logger.error(to_red(f"TLE occured in {input_file}"))
+        return math.nan
+    except subprocess.CalledProcessError:
+        logger.error(to_red(f"Error occured in {input_file}"))
+        return math.nan
+    except Exception as e:
+        logger.exception(e)
+        logger.error(to_red(f"!!! Error occured in {input_file}"))
+        return math.nan
+
+
+def worker_process_file(args) -> tuple[str, float, float, str, str]:
+    """入力`input_file`を処理し、ログやファイル出力も行います。"""
+    (input_file, cmd, timeout, use_relative_score, pre_data,
+     verbose, direction, output_dir, record, total_files) = args
+
+    global worker_lock, worker_counter
+
+    with open(input_file, "r", encoding="utf-8") as f:
+        input_text = f.read()
+
+    filename = input_file
+    if filename.startswith("./"):
+        filename = filename[len("./") :]
+    filename = filename.split("/", 1)[1]
+
+    try:
+        start_time = time.perf_counter()
+        result = subprocess.run(
+            cmd,
+            input=input_text,
+            timeout=timeout,
+            stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+        end_time = time.perf_counter()
+        score_line = result.stderr.rstrip().split("\n")[-1]
+        _, score = score_line.split(" = ")
+        score = float(score)
+
+        relative_score = (
+            -1
+            if input_file not in pre_data
+            else score / pre_data[input_file]
+        )
+
+        if verbose:
+            with worker_lock:
+                worker_counter.value += 1
+                cnt = worker_counter.value
+
+            cnt_str = " " * (len(str(total_files)) - len(str(cnt))) + str(cnt)
+            s = str(f"{score:.3f}")
+            s = " " * (KETA_SCORE - len(s)) + s
+            t = f"{(end_time-start_time):.3f} sec"
+            t = " " * (KETA_TIME - len(t)) + t
+
+            u = ""
+            if direction == "minimize":
+                u = (
+                    to_green(f"{(relative_score):.3f}")
+                    if relative_score < 1.0
+                    else to_red(f"{(relative_score):.3f}")
+                )
+            else:
+                u = (
+                    to_green(f"{(relative_score):.3f}")
+                    if relative_score > 1.0
+                    else to_red(f"{(relative_score):.3f}")
+                )
+
+            if use_relative_score:
+                logger.info(
+                    f"| {cnt_str} / {total_files} | {input_file} | {s} | {t} | {u} |"
+                )
+            else:
+                logger.info(
+                    f"| {cnt_str} / {total_files} | {input_file} | {s} | {t} |"
+                )
+
+        if record:
+            with open(f"{output_dir}/err/{filename}", "w", encoding="utf-8") as out_f:
+                out_f.write(result.stderr)
+            with open(f"{output_dir}/out/{filename}", "w", encoding="utf-8") as out_f:
+                out_f.write(result.stdout)
+
+        return (
+            input_file,
+            score,
+            relative_score,
+            "AC",
+            f"{(end_time-start_time):.3f}",
+        )
+
+    except subprocess.TimeoutExpired as e:
+        if verbose:
+            with worker_lock:
+                worker_counter.value += 1
+                cnt = worker_counter.value
+            cnt_str = " " * (len(str(total_files)) - len(str(cnt))) + str(cnt)
+            s = "-" * KETA_SCORE
+            t = f">{timeout:.3f} sec"
+            t = " " * (KETA_TIME - len(t)) + t
+            logger.info(
+                f"| {cnt_str} / {total_files} | {input_file} | {s} | {to_red(t)} |"
+            )
+
+        if record:
+            with open(f"{output_dir}/err/{filename}", "w", encoding="utf-8") as out_f:
+                stderr_val = e.stderr if isinstance(e.stderr, str) else (e.stderr.decode("utf-8", errors="ignore") if e.stderr else "")
+                out_f.write(stderr_val)
+            with open(f"{output_dir}/out/{filename}", "w", encoding="utf-8") as out_f:
+                stdout_val = e.stdout if isinstance(e.stdout, str) else (e.stdout.decode("utf-8", errors="ignore") if e.stdout else "")
+                out_f.write(stdout_val)
+
+        return input_file, math.nan, math.nan, "TLE", f"{timeout:.3f}"
+
+    except subprocess.CalledProcessError as e:
+        with worker_lock:
+            worker_counter.value += 1
+        if record:
+            with open(f"{output_dir}/err/{filename}", "w", encoding="utf-8") as out_f:
+                if e.stderr is not None:
+                    out_f.write(e.stderr)
+            with open(f"{output_dir}/out/{filename}", "w", encoding="utf-8") as out_f:
+                if e.stdout is not None:
+                    out_f.write(e.stdout)
+        logger.error(to_red(f"Error occured in {input_file}"))
+        return input_file, math.nan, math.nan, "ERROR", "-1"
+
+    except Exception as e:
+        with worker_lock:
+            worker_counter.value += 1
+        logger.exception(e)
+        logger.error(to_red(f"!!! Error occured in {input_file}"))
+        return input_file, math.nan, math.nan, "INNER_ERROR", "-1"
 
 
 class ParallelTester:
@@ -57,10 +259,11 @@ class ParallelTester:
             logger.critical(
                 f"direction must be `minimize` or `maximize` but got {direction}."
             )
-            sys.exit(1)
+            raise ValueError(f"Invalid direction: {direction}")
+
         self.direction = direction
         self.filename = filename
-        self.compile_command = compile_command.split()
+        self.compile_command = compile_command.split() if compile_command else None
         self.execute_command = execute_command.split()
         self.added_command = []
         self.input_file_names = input_file_names
@@ -80,7 +283,6 @@ class ParallelTester:
             for _, row in df.iterrows():
                 self.pre_data[row["filename"]] = row["score"]
 
-        self.counter: multiprocessing.managers.ValueProxy
         self.rnd = Random(None)
 
     def show_score(self, scores: list[float]) -> float:
@@ -113,49 +315,21 @@ class ParallelTester:
             check=True,
         )
 
-    def _process_file_opt_wilcoxon(self, args: tuple[str, int]) -> tuple[int, float]:
-        input_file, id_ = args
-        with open(input_file, "r", encoding="utf-8") as f:
-            input_text = "".join(f.read())
-        try:
-            result = subprocess.run(
-                self.execute_command + self.added_command,
-                stderr=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                input=input_text,
-                timeout=self.timeout,
-                text=True,
-                check=True,
-            )
-            score_line = result.stderr.rstrip().split("\n")[-1]
-            _, score = score_line.split(" = ")
-            score = float(score)
-            if self.use_relative_score:
-                score = (
-                    -1
-                    if input_file not in self.pre_data
-                    else score / self.pre_data[input_file]
-                )
-            return id_, score
-        except subprocess.TimeoutExpired as e:
-            logger.error(to_red(f"TLE occured in {input_file}"))
-            return id_, math.nan
-        except subprocess.CalledProcessError as e:
-            logger.error(to_red(f"Error occured in {input_file}"))
-            return id_, math.nan
-        except Exception as e:
-            logger.exception(e)
-            logger.error(to_red(f"!!! Error occured in {input_file}"))
-            return id_, math.nan
-
     def run_opt_wilcoxon(self, trial: optuna.trial.Trial) -> list[Optional[float]]:
         scores_list: list[float] = [None] * len(self.input_file_names)
         input_filenames = list(enumerate(self.input_file_names))
         self.rnd.shuffle(input_filenames)
+
+        cmd = self.execute_command + self.added_command
+        args_list = [
+            (file, id_, cmd, self.timeout, self.use_relative_score, self.pre_data)
+            for id_, file in input_filenames
+        ]
+
         with multiprocessing.Pool(processes=self.cpu_count) as pool:
             result_iterator = pool.imap_unordered(
-                self._process_file_opt_wilcoxon,
-                [(file, id_) for id_, file in input_filenames],
+                worker_process_file_opt_wilcoxon,
+                args_list,
                 chunksize=1,
             )
             for id_, score in result_iterator:
@@ -165,207 +339,20 @@ class ParallelTester:
                     break
         return scores_list
 
-    def _process_file_light(self, input_file: str) -> float:
-        """入力`input_file`を処理します。
-
-        Returns:
-            float: スコア
-        """
-        with open(input_file, "r", encoding="utf-8") as f:
-            input_text = "".join(f.read())
-
-        try:
-            result = subprocess.run(
-                self.execute_command + self.added_command,
-                input=input_text,
-                timeout=self.timeout,
-                stderr=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                text=True,
-                check=True,
-            )
-            score_line = result.stderr.rstrip().split("\n")[-1]
-            _, score = score_line.split(" = ")
-            score = float(score)
-            if self.use_relative_score:
-                score = (
-                    -1
-                    if input_file not in self.pre_data
-                    else score / self.pre_data[input_file]
-                )
-            return score
-        except subprocess.TimeoutExpired as e:
-            logger.error(to_red(f"TLE occured in {input_file}"))
-            return math.nan
-        except subprocess.CalledProcessError as e:
-            logger.error(to_red(f"Error occured in {input_file}"))
-            return math.nan, "ERROR", "-1"
-        except Exception as e:
-            logger.exception(e)
-            logger.error(to_red(f"!!! Error occured in {input_file}"))
-            return math.nan, "INNER_ERROR", "-1"
-
     def run(self) -> list[float]:
         """実行します。"""
-        pool = multiprocessing.Pool(processes=self.cpu_count)
-        result = pool.map(
-            partial(self._process_file_light), self.input_file_names, chunksize=1
-        )
-        pool.close()
-        pool.join()
+        cmd = self.execute_command + self.added_command
+        args_list = [
+            (file, cmd, self.timeout, self.use_relative_score, self.pre_data)
+            for file in self.input_file_names
+        ]
+
+        with multiprocessing.Pool(processes=self.cpu_count) as pool:
+            result = pool.map(worker_process_file_light, args_list, chunksize=1)
+
         return result
 
-    def _process_file(self, args) -> tuple[str, float, str, str]:
-        """入力`input_file`を処理します。
-
-        Returns:
-            tuple[str, float]: ファイル名、スコア、state, time
-        """
-        input_file, lock, record = args
-        with open(input_file, "r", encoding="utf-8") as f:
-            input_text = "".join(f.read())
-
-        filename = input_file
-        if filename.startswith("./"):
-            filename = filename[len("./") :]
-        filename = filename.split("/", 1)[1]
-
-        try:
-            start_time = time.time()
-            result = subprocess.run(
-                self.execute_command + self.added_command,
-                input=input_text,
-                timeout=self.timeout,
-                stderr=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                text=True,
-                check=True,
-            )
-            end_time = time.time()
-            score_line = result.stderr.rstrip().split("\n")[-1]
-            _, score = score_line.split(" = ")
-            score = float(score)
-            if self.verbose:
-                with lock:
-                    self.counter.value += 1
-                    cnt = self.counter.value
-                relative_score = (
-                    -1
-                    if input_file not in self.pre_data
-                    else score / self.pre_data[input_file]
-                )
-                cnt = " " * (
-                    len(str(len(self.input_file_names))) - len(str(cnt))
-                ) + str(cnt)
-                s = str(f"{score:.3f}")
-                s = " " * (KETA_SCORE - len(s)) + s
-                t = f"{(end_time-start_time):.3f} sec"
-                t = " " * (KETA_TIME - len(t)) + t
-                u = ""
-                if self.direction == "minimize":
-                    u = (
-                        to_green(f"{(relative_score):.3f}")
-                        if relative_score < 1.0
-                        else to_red(f"{(relative_score):.3f}")
-                    )
-                else:
-                    u = (
-                        to_green(f"{(relative_score):.3f}")
-                        if relative_score > 1.0
-                        else to_red(f"{(relative_score):.3f}")
-                    )
-
-                if self.use_relative_score:
-                    logger.info(
-                        f"| {cnt} / {len(self.input_file_names)} | {input_file} | {s} | {t} | {u} |"
-                    )
-                else:
-                    logger.info(
-                        f"| {cnt} / {len(self.input_file_names)} | {input_file} | {s} | {t} |"
-                    )
-
-            if record:
-                # stderr
-                with open(
-                    f"{self.output_dir}/err/{filename}", "w", encoding="utf-8"
-                ) as out_f:
-                    out_f.write(result.stderr)
-
-                # stdout
-                with open(
-                    f"{self.output_dir}/out/{filename}", "w", encoding="utf-8"
-                ) as out_f:
-                    out_f.write(result.stdout)
-
-            return (
-                input_file,
-                score,
-                relative_score,
-                "AC",
-                f"{(end_time-start_time):.3f}",
-            )
-        except subprocess.TimeoutExpired as e:
-            if self.verbose:
-                with lock:
-                    self.counter.value += 1
-                    cnt = self.counter.value
-                cnt = " " * (
-                    len(str(len(self.input_file_names))) - len(str(cnt))
-                ) + str(cnt)
-                s = "-" * KETA_SCORE
-                t = f">{self.timeout:.3f} sec"
-                t = " " * (KETA_TIME - len(t)) + t
-                logger.info(
-                    f"| {cnt} / {len(self.input_file_names)} | {input_file} | {s} | {to_red(t)} |"
-                )
-
-            if record:
-                # stderr
-                with open(
-                    f"{self.output_dir}/err/{filename}", "w", encoding="utf-8"
-                ) as out_f:
-                    if e.stderr is not None:
-                        out_f.write(e.stderr.decode("utf-8"))
-
-                # stdout
-                with open(
-                    f"{self.output_dir}/out/{filename}", "w", encoding="utf-8"
-                ) as out_f:
-                    if e.stdout is not None:
-                        out_f.write(e.stdout.decode("utf-8"))
-
-            return input_file, math.nan, math.nan, "TLE", f"{self.timeout:.3f}"
-        except subprocess.CalledProcessError as e:
-            with lock:
-                self.counter.value += 1
-            # logger.exception(e)
-
-            if record:
-                # stderr
-                with open(
-                    f"{self.output_dir}/err/{filename}", "w", encoding="utf-8"
-                ) as out_f:
-                    if e.stderr is not None:
-                        out_f.write(e.stderr)
-
-                # stdout
-                with open(
-                    f"{self.output_dir}/out/{filename}", "w", encoding="utf-8"
-                ) as out_f:
-                    if e.stdout is not None:
-                        out_f.write(e.stdout)
-
-            logger.error(to_red(f"Error occured in {input_file}"))
-            return input_file, math.nan, math.nan, "ERROR", "-1"
-        except Exception as e:
-            with lock:
-                self.counter.value += 1
-            logger.exception(e)
-            logger.error(to_red(f"!!! Error occured in {input_file}"))
-            self.counter
-            return input_file, math.nan, math.nan, "INNER_ERROR", "-1"
-
-    def run_record(self, record: bool) -> list[tuple[str, float]]:
+    def run_record(self, record: bool):
         """実行します。"""
         dt_now = datetime.datetime.now()
 
@@ -391,17 +378,28 @@ class ParallelTester:
             if not os.path.exists(f"{self.output_dir}/out/"):
                 os.makedirs(f"{self.output_dir}/out/")
 
+        cmd = self.execute_command + self.added_command
+        total_files = len(self.input_file_names)
+        args_list = [
+            (file, cmd, self.timeout, self.use_relative_score, self.pre_data,
+             self.verbose, self.direction, self.output_dir, record, total_files)
+            for file in self.input_file_names
+        ]
+
         with multiprocessing.Manager() as manager:
             lock = manager.Lock()
-            self.counter = manager.Value("i", 0)
-            pool = multiprocessing.Pool(processes=self.cpu_count)
-            result = pool.map(
-                self._process_file,
-                [(file, lock, record) for file in self.input_file_names],
-                chunksize=1,
-            )
-            pool.close()
-            pool.join()
+            counter = manager.Value("i", 0)
+
+            with multiprocessing.Pool(
+                processes=self.cpu_count,
+                initializer=init_worker,
+                initargs=(lock, counter)
+            ) as pool:
+                result = pool.map(
+                    worker_process_file,
+                    args_list,
+                    chunksize=1,
+                )
 
         # csv
         result.sort()
@@ -482,7 +480,6 @@ def build_tester(
         pre_dir_name=settings.pre_dir_name,
     )
     return tester
-
 
 def run_test(
     settings: AHCSettings,

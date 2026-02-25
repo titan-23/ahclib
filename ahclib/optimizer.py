@@ -48,12 +48,8 @@ class Optimizer:
             return score
 
         def _objective_wilcoxon_pruner(trial: optuna.trial.Trial) -> float:
-            tester: ParallelTester = build_tester(
-                self.settings,
-                njobs=self.settings.njobs,
-                verbose=False,
-            )
             args = self.settings.objective(trial)
+            tester.clear_execute_command()
             tester.append_execute_command(args)
             scores = tester.run_opt_wilcoxon(trial)
             if None in scores:
@@ -67,24 +63,28 @@ class Optimizer:
             return score
 
         storage = f"sqlite:///{self.path}/data.db"
-        _objective: Callable[[optuna.trial.Trial], float] = _objective
+        _objective_func: Callable[[optuna.trial.Trial], float] = _objective
 
         if sampler == "auto_sampler":
-            logger.info(f"- sampler       : {to_bold(sampler)}")
-            sampler = optunahub.load_module("samplers/auto_sampler").AutoSampler()
+            optuna_sampler = optunahub.load_module("samplers/auto_sampler").AutoSampler()
+        else:
+            sampler = "TPESampler"
+            optuna_sampler = optuna.samplers.TPESampler(multivariate=True)
+        logger.info(f"- sampler       : {to_bold(sampler)}")
 
+        optuna_pruner = None
         if pruner == "WilcoxonPruner":
             logger.info(f"- pruner        : {to_bold(pruner)}")
-            pruner = optuna.pruners.WilcoxonPruner(p_threshold=0.1)
-            _objective = _objective_wilcoxon_pruner
+            optuna_pruner = optuna.pruners.WilcoxonPruner(p_threshold=0.1)
+            _objective_func = _objective_wilcoxon_pruner
 
         study: optuna.Study = optuna.create_study(
             direction=self.settings.direction,
             study_name=self.settings.study_name,
             storage=storage,
             load_if_exists=True,
-            sampler=sampler,
-            pruner=pruner,
+            sampler=optuna_sampler,
+            pruner=optuna_pruner,
         )
 
         try:
@@ -111,7 +111,7 @@ class Optimizer:
 
             tester.compile()
             study.optimize(
-                _objective,
+                _objective_func,
                 n_trials=self.settings.n_trials,
                 n_jobs=min(self.settings.njobs_optuna, multiprocessing.cpu_count() - 1),
             )
@@ -122,11 +122,15 @@ class Optimizer:
             logger.info(
                 f"Finish parameter seraching. Time: {time.time() - start:.2f}sec."
             )
+            input(to_bold(to_blue("Press Enter to close the dashboard and exit...")))
+
         except Exception as e:
-            print(e)
+            logger.error(e)
             exit(1)
-        process.terminate()
-        process.wait()
+        finally:
+            if 'process' in locals():
+                process.terminate()
+                process.wait()
 
     def output_study(self, study: optuna.Study) -> None:
         path = os.path.join(self.path, self.study_name)
@@ -139,29 +143,19 @@ class Optimizer:
         if not os.path.exists(img_path):
             os.makedirs(img_path)
 
-        fig = optuna.visualization.plot_contour(study)
-        fig.write_html(os.path.join(img_path, "contour.html"))
-        fig.write_image(os.path.join(img_path, "contour.png"))
+        def save_plot(fig, filename):
+            fig.write_html(os.path.join(img_path, f"{filename}.html"))
+            try:
+                fig.write_image(os.path.join(img_path, f"{filename}.png"))
+            except ValueError:
+                pass
 
-        fig = optuna.visualization.plot_param_importances(study)
-        fig.write_html(os.path.join(img_path, "param_importances.html"))
-        fig.write_image(os.path.join(img_path, "param_importances.png"))
-
-        fig = optuna.visualization.plot_edf(study)
-        fig.write_html(os.path.join(img_path, "edf.html"))
-        fig.write_image(os.path.join(img_path, "edf.png"))
-
-        fig = optuna.visualization.plot_optimization_history(study)
-        fig.write_html(os.path.join(img_path, "optimization_history.html"))
-        fig.write_image(os.path.join(img_path, "optimization_history.png"))
-
-        fig = optuna.visualization.plot_parallel_coordinate(study)
-        fig.write_html(os.path.join(img_path, "parallel_coordinate.html"))
-        fig.write_image(os.path.join(img_path, "parallel_coordinate.png"))
-
-        fig = optuna.visualization.plot_slice(study)
-        fig.write_html(os.path.join(img_path, "slice.html"))
-        fig.write_image(os.path.join(img_path, "slice.png"))
+        save_plot(optuna.visualization.plot_contour(study), "contour")
+        save_plot(optuna.visualization.plot_param_importances(study), "param_importances")
+        save_plot(optuna.visualization.plot_edf(study), "edf")
+        save_plot(optuna.visualization.plot_optimization_history(study), "optimization_history")
+        save_plot(optuna.visualization.plot_parallel_coordinate(study), "parallel_coordinate")
+        save_plot(optuna.visualization.plot_slice(study), "slice")
 
 
 def run_optimizer(settings: AHCSettings, sampler=None, pruner=None) -> None:
