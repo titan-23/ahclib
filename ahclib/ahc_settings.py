@@ -37,7 +37,20 @@ class AHCSettings:
         scores = list(filter(lambda x: x is not None, scores))
         return sum(scores) / len(scores)
 
-    # ------------------------------------ #
+    # visualize -------------------------- #
+
+    @staticmethod
+    def parse_input_params(file_path: str) -> dict:
+        """ ./in/ 以下のファイルを読み込み、パラメータを辞書で返す """
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            res = {}
+            res["N"] = int(lines[0].split()[0])
+            res["R"] = int(lines[0].split()[1])
+            return res
+        except Exception:
+            return {}
 
     # optimizer -------------------------- #
     # study_name
@@ -46,7 +59,7 @@ class AHCSettings:
     # optuna の試行回数
     n_trials = 100
 
-    # optuna の cpu_count
+    # optuna の cpu_count / 1推奨!
     njobs_optuna = 1
 
     def objective(trial: optuna.trial.Trial) -> tuple:
