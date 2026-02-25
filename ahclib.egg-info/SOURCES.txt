@@ -5,7 +5,6 @@ ahclib/__init__.py
 ahclib/__main__.py
 ahclib/ahc_settings.py
 ahclib/ahc_util.py
-ahclib/calc_ratio.py
 ahclib/main.py
 ahclib/optimizer.py
 ahclib/parallel_tester.py
