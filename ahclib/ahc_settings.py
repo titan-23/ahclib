@@ -46,8 +46,8 @@ class AHCSettings:
             with open(file_path, "r", encoding="utf-8") as f:
                 lines = f.readlines()
             res = {}
-            res["N"] = int(lines[0].split()[0])
-            res["R"] = int(lines[0].split()[1])
+            # TODO
+            res["N"], res["M"] = map(int, lines[0].split())
             return res
         except Exception:
             return {}
