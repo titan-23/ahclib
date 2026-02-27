@@ -39,6 +39,8 @@ body { margin: 0; background-color: #121212; color: #e0e0e0; font-family: system
 ::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #666; }
 
+input[type="radio"], input[type="checkbox"] { accent-color: #29b6f6; cursor: pointer; }
+
 .layout-container { display: flex; height: 100vh; width: 100vw; }
 
 .sidebar-base {
@@ -91,7 +93,7 @@ body { margin: 0; background-color: #121212; color: #e0e0e0; font-family: system
 }
 .custom-tab--selected {
     background-color: #1e1e1e !important; color: #e0e0e0 !important;
-    border-bottom: 2px solid #1565c0 !important;
+    border-bottom: 2px solid #29b6f6 !important;
 }
 """
 with open(os.path.join(ASSETS_PATH, "custom.css"), "w", encoding="utf-8") as f:
@@ -103,27 +105,49 @@ def format_timestamp(ts):
     except:
         return ts
 
-def load_data():
-    data = []
-    if not os.path.exists(BASE_PATH):
-        return pd.DataFrame(columns=["filename", "score", "state", "time", "timestamp", "name", "test_id"])
+# --- リファクタリング：安全で高速なCSVキャッシュ機構 ---
+_CSV_CACHE = {} # { "folder_path": (mtime, dataframe) }
 
-    for folder in sorted(os.listdir(BASE_PATH)):
+def load_data():
+    global _CSV_CACHE
+    data = []
+    empty_df = pd.DataFrame(columns=["filename", "score", "state", "time", "timestamp", "name", "test_id"])
+
+    if not os.path.exists(BASE_PATH):
+        return empty_df
+
+    current_folders = sorted(os.listdir(BASE_PATH))
+
+    # 物理削除されたフォルダをキャッシュから掃除
+    _CSV_CACHE = {k: v for k, v in _CSV_CACHE.items() if os.path.basename(k) in current_folders}
+
+    for folder in current_folders:
         folder_path = os.path.join(BASE_PATH, folder)
         csv_path = os.path.join(folder_path, FILE_NAME)
+
         if os.path.exists(csv_path):
-            df = pd.read_csv(csv_path)
-            df["timestamp"] = folder
-            df["name"] = df["filename"].str.extract(r"(\d{4}\.txt)")
-            df["test_id"] = df["filename"].str.extract(r"(\d{4}\.txt)")
-            data.append(df)
+            try:
+                mtime = os.path.getmtime(csv_path)
+                # キャッシュがあり、更新日時が変わっていなければそれを使う
+                if folder_path in _CSV_CACHE and _CSV_CACHE[folder_path][0] == mtime:
+                    df = _CSV_CACHE[folder_path][1]
+                else:
+                    df = pd.read_csv(csv_path)
+                    df["timestamp"] = folder
+                    df["name"] = df["filename"].str.extract(r"(\d{4}\.txt)")
+                    df["test_id"] = df["filename"].str.extract(r"(\d{4}\.txt)")
+                    _CSV_CACHE[folder_path] = (mtime, df)
+                data.append(df)
+            except Exception:
+                pass # 読み込み中のエラーは無視
 
     if not data:
-        return pd.DataFrame(columns=["filename", "score", "state", "time", "timestamp", "name", "test_id"])
+        return empty_df
 
     return pd.concat(data, ignore_index=True)
 
 
+# --- リファクタリング：ピンポイント読み込みに一本化 ---
 def load_single_err_out(timestamp, filename):
     err_path = os.path.join(BASE_PATH, timestamp, "err", filename)
     out_path = os.path.join(BASE_PATH, timestamp, "out", filename)
@@ -152,6 +176,7 @@ def load_in_file_content(filename):
     return ""
 
 
+# --- メタデータのキャッシュ機構（現状維持で最適化済み） ---
 _CACHE_META_DATA = None
 _CACHE_IN_FILES = []
 _CACHE_SETTINGS_MTIME = 0
@@ -216,6 +241,8 @@ app = Dash(__name__, assets_folder=ASSETS_PATH)
 app.layout = html.Div(className="layout-container", children=[
     dcc.Store(id="base-store"),
     dcc.Store(id="table-data", data=[]),
+    dcc.Store(id="prev-selected-rows", data=[]),
+    dcc.Store(id="target-ts-store", data=None),
 
     dcc.Interval(id="task-interval", interval=10000, n_intervals=0),
     dcc.Store(id="task-was-running", data=False),
@@ -310,21 +337,21 @@ app.layout = html.Div(className="layout-container", children=[
                             {"label": html.Span("相関(散布図)", style={"paddingLeft": "4px"}), "value": "param_scatter"},
                             {"label": html.Span("相関(Box)", style={"paddingLeft": "4px"}), "value": "param_box"},
                             {"label": html.Span("相関(平均)", style={"paddingLeft": "4px"}), "value": "param_line"},
+                            {"label": html.Span("HM(絶対)", style={"paddingLeft": "4px"}), "value": "heatmap_abs"},
+                            {"label": html.Span("HM(相対)", style={"paddingLeft": "4px"}), "value": "heatmap_rel"},
                         ],
                         value="abs",
                         inline=True,
                         style={"display": "flex", "gap": "12px"},
                         labelStyle={"cursor": "pointer", "color": "#e0e0e0", "display": "flex", "alignItems": "center", "fontSize": "13px"}
                     ),
-                    html.Div(id="param-selector-container", children=[
-                        dcc.Dropdown(
-                            id="param-selector",
-                            options=[],
-                            clearable=False,
-                            style={"width": "120px", "color": "#333"},
-                            className="dash-dropdown"
-                        )
-                    ], style={"display": "none"}),
+                    html.Div(id="param-selector-container", style={"display": "none", "alignItems": "center", "gap": "5px"}, children=[
+                        html.Div(id="param-y-wrapper", style={"display": "none", "alignItems": "center", "gap": "5px"}, children=[
+                            dcc.Dropdown(id="param-selector-y", options=[], clearable=False, style={"width": "80px", "color": "#333"}, className="dash-dropdown"),
+                            html.Span("×", style={"color": "#aaa", "paddingBottom": "2px"})
+                        ]),
+                        dcc.Dropdown(id="param-selector", options=[], clearable=False, style={"width": "80px", "color": "#333"}, className="dash-dropdown")
+                    ]),
                     dcc.Checklist(
                         id="log-scale-check",
                         options=[{"label": html.Span(" Y軸をLogスケール", style={"paddingLeft": "4px", "color": "#e0e0e0"}), "value": "log"}],
@@ -370,7 +397,38 @@ app.layout = html.Div(className="layout-container", children=[
     ])
 ])
 
-# --- コールバック ---
+# --- コールバック群 ---
+@app.callback(
+    Output("target-ts-store", "data"),
+    Output("prev-selected-rows", "data"),
+    Input("timestamp-table", "selected_rows"),
+    State("prev-selected-rows", "data"),
+    State("target-ts-store", "data"),
+    State("table-data", "data")
+)
+def update_target_store(selected_rows, prev_selected, current_target, table_data):
+    if selected_rows is None: selected_rows = []
+    if prev_selected is None: prev_selected = []
+    if not table_data: return None, selected_rows
+
+    added = [r for r in selected_rows if r not in prev_selected]
+    new_target = current_target
+
+    if added:
+        last_added = added[-1]
+        if last_added < len(table_data):
+            new_target = table_data[last_added]["timestamp"]
+    else:
+        selected_ts_list = [table_data[r]["timestamp"] for r in selected_rows if r < len(table_data)]
+        if new_target not in selected_ts_list:
+            if selected_ts_list:
+                new_target = sorted(selected_ts_list)[-1]
+            else:
+                new_target = None
+
+    return new_target, selected_rows
+
+
 @app.callback(
     Output("queue-display", "children"),
     Input("btn-run-test", "n_clicks"),
@@ -437,29 +495,36 @@ def toggle_sidebar_pin(n_clicks, current_class):
 
 @app.callback(
     Output("param-selector-container", "style"),
+    Output("param-y-wrapper", "style"),
     Input("graph-type", "value")
 )
 def toggle_param_selector(graph_type):
-    if graph_type in ["param_scatter", "param_box", "param_line"]:
-        return {"display": "block"}
-    return {"display": "none"}
+    if graph_type in ["heatmap_abs", "heatmap_rel"]:
+        return {"display": "flex", "alignItems": "center", "gap": "5px"}, {"display": "flex", "alignItems": "center", "gap": "5px"}
+    elif graph_type in ["param_scatter", "param_box", "param_line"]:
+        return {"display": "flex", "alignItems": "center", "gap": "5px"}, {"display": "none"}
+    return {"display": "none"}, {"display": "none"}
 
 @app.callback(
     Output("param-selector", "options"),
     Output("param-selector", "value"),
+    Output("param-selector-y", "options"),
+    Output("param-selector-y", "value"),
     Input("reload-button", "n_clicks"),
-    State("param-selector", "value")
+    State("param-selector", "value"),
+    State("param-selector-y", "value")
 )
-def update_param_options(n, current_value):
+def update_param_options(n, current_x, current_y):
     meta_df = load_meta_data()
     cols = [c for c in meta_df.columns if c != "test_id"]
-    if not cols: return [], None
+    if not cols: return [], None, [], None
 
     options = [{"label": c, "value": c} for c in cols]
 
-    if current_value in cols:
-        return options, current_value
-    return options, cols[0]
+    val_x = current_x if current_x in cols else cols[0]
+    val_y = current_y if current_y in cols else (cols[1] if len(cols) > 1 else cols[0])
+
+    return options, val_x, options, val_y
 
 @app.callback(
     Output("base-store", "data"),
@@ -555,15 +620,23 @@ def handle_selection(n_latest, n_all, n_clear, n_reload, native_selected, data):
 
 @app.callback(
     Output("current-timestamp-display", "children"),
-    Input("timestamp-table", "selected_rows"),
-    State("table-data", "data"),
+    Input("target-ts-store", "data"),
 )
-def show_current_timestamp(selected_rows, table_data):
-    valid_rows = [r for r in selected_rows if r < len(table_data)] if selected_rows else []
-    if not valid_rows or not table_data:
+def show_current_timestamp(target_ts):
+    if not target_ts:
         return "テストケース詳細 (選択されていません)"
-    latest_ts = table_data[valid_rows[-1]]["timestamp"]
-    return f"詳細表示: {latest_ts}"
+    return f"詳細表示: {target_ts}"
+
+@app.callback(
+    Output("file-name-table", "data"),
+    Input("target-ts-store", "data"),
+)
+def update_file_table(target_ts):
+    if not target_ts: return []
+    df = load_data()
+    df = df[df["timestamp"] == target_ts]
+    df["time"] = pd.to_numeric(df["time"], errors="coerce")
+    return df[["name", "score", "time"]].to_dict("records")
 
 @app.callback(
     Output("score-comparison-graph", "figure"),
@@ -571,19 +644,27 @@ def show_current_timestamp(selected_rows, table_data):
     Input("timestamp-table", "selected_rows"),
     Input("graph-type", "value"),
     Input("param-selector", "value"),
-    Input("log-scale-check", "value"), # ← 追加
+    Input("param-selector-y", "value"),
+    Input("log-scale-check", "value"),
+    Input("target-ts-store", "data"),
     State("table-data", "data"),
     State("base-store", "data")
 )
-def update_graph(rows, graph_type, param_col, log_scale, table_data, base_ts):
+def update_graph(rows, graph_type, param_x, param_y, log_scale, target_ts, table_data, base_ts):
     valid_rows = [r for r in rows if r < len(table_data)] if rows else []
-    if not valid_rows:
+    if not valid_rows or not target_ts:
         fig = px.line(title="（実行結果が選択されていません）")
-        fig.update_layout(template="plotly_dark", margin=dict(l=20, r=20, t=40, b=20), paper_bgcolor="#1e1e1e", plot_bgcolor="#1e1e1e")
-        return fig, "比較グラフ: 選択中 0 件"
+        fig.update_layout(template="plotly_dark", margin=dict(l=20, r=20, t=20, b=20), paper_bgcolor="#1e1e1e", plot_bgcolor="#1e1e1e")
+        return fig, ""
 
     selected_timestamps = [table_data[i]["timestamp"] for i in valid_rows]
+
     df_all = load_data()
+
+    all_timestamps = sorted(df_all["timestamp"].unique())
+    if base_ts not in all_timestamps:
+        base_ts = all_timestamps[0] if all_timestamps else None
+
     df = df_all[df_all["timestamp"].isin(selected_timestamps)]
     df = df[pd.to_numeric(df["score"], errors="coerce").notna()]
     if not df.empty:
@@ -591,90 +672,157 @@ def update_graph(rows, graph_type, param_col, log_scale, table_data, base_ts):
 
     if df.empty:
         fig = px.line(title="（表示するデータがありません）")
-    else:
-        sorted_ts = sorted(selected_timestamps)
+        return fig, ""
 
-        if graph_type == "abs":
-            fig = px.line(df, x="test_id", y="score", color="timestamp", markers=True, category_orders={"timestamp": sorted_ts})
-            fig.update_layout(yaxis_title="Score")
+    sorted_ts = sorted(selected_timestamps)
 
-        elif graph_type == "rel":
-            if base_ts not in df_all["timestamp"].values:
-                base_ts = sorted_ts[0]
-            base_df = df_all[df_all["timestamp"] == base_ts][["test_id", "score"]].rename(columns={"score": "base_score"})
-            merged = pd.merge(df, base_df, on="test_id", how="left")
-            merged["relative_score"] = merged.apply(lambda r: r["score"] / r["base_score"] if pd.notna(r["base_score"]) and r["base_score"] != 0 else 1.0, axis=1)
-            fig = px.line(merged, x="test_id", y="relative_score", color="timestamp", markers=True, category_orders={"timestamp": sorted_ts})
-            fig.add_hline(y=1.0, line_dash="dash", line_color="#888", annotation_text=f"Base: {base_ts}")
-            fig.update_layout(yaxis_title="Relative Score")
+    if graph_type == "abs":
+        fig = px.line(df, x="test_id", y="score", color="timestamp", markers=True, category_orders={"timestamp": sorted_ts})
+        fig.update_layout(yaxis_title="Score")
 
-        elif graph_type == "box":
-            fig = px.box(df, x="timestamp", y="score", color="timestamp", category_orders={"timestamp": sorted_ts})
-            fig.update_layout(xaxis_title="Execution", yaxis_title="Score")
+    elif graph_type == "rel":
+        base_df = df_all[df_all["timestamp"] == base_ts][["test_id", "score"]].rename(columns={"score": "base_score"})
+        merged = pd.merge(df, base_df, on="test_id", how="left")
+        merged["relative_score"] = merged.apply(lambda r: r["score"] / r["base_score"] if pd.notna(r["base_score"]) and r["base_score"] != 0 else 1.0, axis=1)
+        fig = px.line(merged, x="test_id", y="relative_score", color="timestamp", markers=True, category_orders={"timestamp": sorted_ts})
+        fig.add_hline(y=1.0, line_dash="dash", line_color="#888", annotation_text=f"Base: {base_ts}")
+        fig.update_layout(yaxis_title="Relative Score")
 
-        elif graph_type.startswith("param_"):
-            meta_df = load_meta_data()
-            if not meta_df.empty and param_col in meta_df.columns:
-                merged = pd.merge(df, meta_df, on="test_id", how="left")
-                if graph_type == "param_scatter":
-                    fig = px.scatter(merged, x=param_col, y="score", color="timestamp", hover_data=["test_id"], category_orders={"timestamp": sorted_ts})
-                elif graph_type == "param_box":
-                    fig = px.box(merged, x=param_col, y="score", color="timestamp", category_orders={"timestamp": sorted_ts})
-                elif graph_type == "param_line":
-                    avg_df = merged.groupby([param_col, "timestamp"])["score"].mean().reset_index()
-                    fig = px.line(avg_df, x=param_col, y="score", color="timestamp", markers=True, category_orders={"timestamp": sorted_ts})
-                fig.update_layout(xaxis_title=f"Parameter: {param_col}", yaxis_title="Score")
+    elif graph_type == "box":
+        fig = px.box(df, x="timestamp", y="score", color="timestamp", category_orders={"timestamp": sorted_ts})
+        fig.update_layout(xaxis_title="Execution", yaxis_title="Score")
+
+    elif graph_type.startswith("param_"):
+        param_col = param_x
+        meta_df = load_meta_data()
+        if not meta_df.empty and param_col in meta_df.columns:
+            merged = pd.merge(df, meta_df, on="test_id", how="left")
+            if graph_type == "param_scatter":
+                fig = px.scatter(merged, x=param_col, y="score", color="timestamp", hover_data=["test_id"], category_orders={"timestamp": sorted_ts})
+            elif graph_type == "param_box":
+                fig = px.box(merged, x=param_col, y="score", color="timestamp", category_orders={"timestamp": sorted_ts})
+            elif graph_type == "param_line":
+                avg_df = merged.groupby([param_col, "timestamp"])["score"].mean().reset_index()
+                fig = px.line(avg_df, x=param_col, y="score", color="timestamp", markers=True, category_orders={"timestamp": sorted_ts})
+            fig.update_layout(xaxis_title=f"Parameter: {param_col}", yaxis_title="Score")
+        else:
+            fig = px.scatter(title="（パラメータ情報を取得できませんでした）")
+            fig.update_layout(paper_bgcolor="#1e1e1e", plot_bgcolor="#1e1e1e")
+
+    elif graph_type in ["heatmap_abs", "heatmap_rel"]:
+        meta_df = load_meta_data()
+        if not meta_df.empty and param_x in meta_df.columns and param_y in meta_df.columns:
+            df_hm = df_all[df_all["timestamp"] == target_ts]
+            df_hm = df_hm[pd.to_numeric(df_hm["score"], errors="coerce").notna()]
+            df_hm["score"] = df_hm["score"].astype(float)
+
+            merged = pd.merge(df_hm, meta_df, on="test_id", how="left")
+
+            if graph_type == "heatmap_rel":
+                base_df = df_all[df_all["timestamp"] == base_ts][["test_id", "score"]].rename(columns={"score": "base_score"})
+                merged = pd.merge(merged, base_df, on="test_id", how="left")
+                merged["val"] = merged.apply(lambda r: r["score"] / r["base_score"] if pd.notna(r["base_score"]) and r["base_score"] != 0 else 1.0, axis=1)
             else:
-                fig = px.scatter(title="（パラメータ情報を取得できませんでした）")
-                fig.update_layout(paper_bgcolor="#1e1e1e", plot_bgcolor="#1e1e1e")
+                merged["val"] = merged["score"]
 
-    # --- 対数スケールの適用判定 ---
+            avg_df = merged.groupby([param_y, param_x])["val"].mean().reset_index()
+            pivot_df = avg_df.pivot(index=param_y, columns=param_x, values="val")
+            pivot_df = pivot_df.sort_index().sort_index(axis=1).astype(float)
+
+            if DIRECTION == "minimize":
+                if graph_type == "heatmap_rel":
+                    color_scale = [[0.0, "#4caf50"], [0.5, "#1e1e1e"], [1.0, "#f44336"]]
+                    zmid = 1.0
+                else:
+                    color_scale = [[0.0, "#4caf50"], [1.0, "#f44336"]]
+                    zmid = None
+            else:
+                if graph_type == "heatmap_rel":
+                    color_scale = [[0.0, "#f44336"], [0.5, "#1e1e1e"], [1.0, "#4caf50"]]
+                    zmid = 1.0
+                else:
+                    color_scale = [[0.0, "#f44336"], [1.0, "#4caf50"]]
+                    zmid = None
+
+            text_fmt = ".3f" if graph_type == "heatmap_rel" else ".3s"
+
+            vmin = pivot_df.min().min()
+            vmax = pivot_df.max().max()
+            safe_range = None
+            if pd.notna(vmin) and vmin == vmax:
+                safe_range = [vmin - 0.1, vmax + 0.1]
+                zmid = None
+
+            fig = px.imshow(
+                pivot_df.values,
+                labels=dict(x=f"{param_x}", y=f"{param_y}", color="Rel Ave" if graph_type=="heatmap_rel" else "Abs Ave"),
+                x=[str(x) for x in pivot_df.columns],
+                y=[str(y) for y in pivot_df.index],
+                aspect="auto",
+                color_continuous_scale=color_scale,
+                color_continuous_midpoint=zmid,
+                range_color=safe_range,
+                origin="lower",
+                text_auto=text_fmt
+            )
+            fig.update_layout(xaxis_title=f"Parameter: {param_x}", yaxis_title=f"Parameter: {param_y}")
+        else:
+            fig = px.scatter(title="（パラメータ情報を取得できませんでした）")
+            fig.update_layout(paper_bgcolor="#1e1e1e", plot_bgcolor="#1e1e1e")
+
     is_log = bool(log_scale and "log" in log_scale)
+
+    if graph_type in ["heatmap_abs", "heatmap_rel"]:
+        yaxis_type = "category"
+        xaxis_type = "category"
+    else:
+        yaxis_type = "log" if is_log else "linear"
+        xaxis_type = None
 
     fig.update_layout(
         template="plotly_dark",
         hovermode="x unified" if graph_type in ["abs", "rel"] else "closest",
-        margin=dict(l=20, r=20, t=20, b=20),
+        margin=dict(l=20, r=20, t=10, b=20),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         paper_bgcolor="#1e1e1e",
         plot_bgcolor="#1e1e1e",
         uirevision=True,
-        yaxis_type="log" if is_log else "linear"  # ← 追加：Logの切り替え
+        yaxis_type=yaxis_type
     )
-    return fig, f"比較グラフ: 選択中 {len(selected_timestamps)} 件"
 
-@app.callback(
-    Output("file-name-table", "data"),
-    Input("timestamp-table", "selected_rows"),
-    State("table-data", "data"),
-)
-def update_file_table(selected_rows, table_data):
-    valid_rows = [r for r in selected_rows if r < len(table_data)] if selected_rows else []
-    if not valid_rows or not table_data: return []
-    timestamp = table_data[valid_rows[-1]]["timestamp"]
-    df = load_data()
-    df = df[df["timestamp"] == timestamp]
-    df["time"] = pd.to_numeric(df["time"], errors="coerce")
-    return df[["name", "score", "time"]].to_dict("records")
+    if xaxis_type:
+        fig.update_layout(xaxis_type=xaxis_type)
 
+    if graph_type == "heatmap_abs":
+        summary_msg = f"ヒートマップ対象: {target_ts}"
+    elif graph_type == "heatmap_rel":
+        summary_msg = f"ヒートマップ対象: {target_ts} (Base: {base_ts})"
+    else:
+        summary_msg = f"直近に選択したケース: {target_ts}"
+
+    return fig, summary_msg
+
+
+# --- 変更：不要な全ファイル読み込み(load_err_out_files)を完全に削除 ---
 @app.callback(
     Output("tab-content", "children"),
     Input("detail-tabs", "value"),
     Input("file-name-table", "active_cell"),
     State("file-name-table", "data"),
-    State("timestamp-table", "selected_rows"),
-    State("table-data", "data"),
+    Input("target-ts-store", "data"),
 )
-def render_tab_content(tab, active_cell, file_data, ts_rows, ts_data):
-    if not active_cell or not file_data or not ts_rows or not ts_data:
+def render_tab_content(tab, active_cell, file_data, target_ts):
+    if not active_cell or not file_data or not target_ts:
         return html.Div("ファイルが選択されていません。", style={"color": "#ccc"})
 
+    if active_cell["row"] >= len(file_data):
+        return html.Div("ファイルが見つかりません。", style={"color": "#ccc"})
+
     filename = file_data[active_cell["row"]]["name"]
-    valid_rows = [r for r in ts_rows if r < len(ts_data)]
-    if not valid_rows: return html.Div("データが見つかりません。", style={"color": "#ccc"})
-    timestamp = ts_data[valid_rows[-1]]["timestamp"]
+    timestamp = target_ts
 
     if tab == "tab-text":
+        # ここでピンポイント読み込みを使用（激重処理を回避）
         err_text, out_text = load_single_err_out(timestamp, filename)
 
         return html.Div(style={"display": "flex", "flexDirection": "column", "gap": "20px", "height": "100%"}, children=[
@@ -696,6 +844,7 @@ def render_tab_content(tab, active_cell, file_data, ts_rows, ts_data):
 
     elif tab == "tab-vis":
         in_text = load_in_file_content(filename)
+        # ここもピンポイント読み込みに修正
         _, out_text = load_single_err_out(timestamp, filename)
         if out_text == "(outファイルなし)":
             out_text = ""
