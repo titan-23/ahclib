@@ -3,8 +3,11 @@ import sys
 import json
 import shutil
 import importlib
+import difflib
+import re
 import pandas as pd
 import plotly.express as px
+import dash
 from datetime import datetime
 from dash import Dash, dcc, html, dash_table, ctx
 from dash.dependencies import Input, Output, State
@@ -78,7 +81,7 @@ input[type="radio"], input[type="checkbox"] { accent-color: #29b6f6; cursor: poi
 .btn-pin:hover { color: #e0e0e0; }
 
 .code-container { position: relative; background-color: #2d2d2d; border: 1px solid #444; border-radius: 4px; padding: 15px; height: 300px; display: flex; }
-.code-textarea { width: 100%; height: 100%; background-color: transparent; color: #e0e0e0; border: none; outline: none; font-family: monospace; resize: none; padding: 0; }
+.code-textarea { width: 100%; height: 100%; background-color: transparent; color: #e0e0e0; border: none; outline: none; font-family: monospace; resize: none; padding: 0; white-space: pre; overflow-wrap: normal; overflow-x: auto; }
 .clipboard-btn { position: absolute; top: 10px; right: 20px; font-size: 20px; cursor: pointer; color: #e0e0e0; z-index: 5; }
 
 .dash-dropdown .Select-control { background-color: #2d2d2d !important; border: 1px solid #444 !important; color: #e0e0e0 !important; }
@@ -105,8 +108,7 @@ def format_timestamp(ts):
     except:
         return ts
 
-# --- リファクタリング：安全で高速なCSVキャッシュ機構 ---
-_CSV_CACHE = {} # { "folder_path": (mtime, dataframe) }
+_CSV_CACHE = {}
 
 def load_data():
     global _CSV_CACHE
@@ -117,8 +119,6 @@ def load_data():
         return empty_df
 
     current_folders = sorted(os.listdir(BASE_PATH))
-
-    # 物理削除されたフォルダをキャッシュから掃除
     _CSV_CACHE = {k: v for k, v in _CSV_CACHE.items() if os.path.basename(k) in current_folders}
 
     for folder in current_folders:
@@ -128,7 +128,6 @@ def load_data():
         if os.path.exists(csv_path):
             try:
                 mtime = os.path.getmtime(csv_path)
-                # キャッシュがあり、更新日時が変わっていなければそれを使う
                 if folder_path in _CSV_CACHE and _CSV_CACHE[folder_path][0] == mtime:
                     df = _CSV_CACHE[folder_path][1]
                 else:
@@ -139,15 +138,13 @@ def load_data():
                     _CSV_CACHE[folder_path] = (mtime, df)
                 data.append(df)
             except Exception:
-                pass # 読み込み中のエラーは無視
+                pass
 
     if not data:
         return empty_df
 
     return pd.concat(data, ignore_index=True)
 
-
-# --- リファクタリング：ピンポイント読み込みに一本化 ---
 def load_single_err_out(timestamp, filename):
     err_path = os.path.join(BASE_PATH, timestamp, "err", filename)
     out_path = os.path.join(BASE_PATH, timestamp, "out", filename)
@@ -164,6 +161,45 @@ def load_single_err_out(timestamp, filename):
 
     return err_text, out_text
 
+def load_source_code(timestamp):
+    """保存された ahc_settings.py と同ディレクトリのソースコードを取得する"""
+    dir_path = os.path.join(BASE_PATH, timestamp)
+    settings_path = os.path.join(dir_path, "ahc_settings.py")
+    src_filename = None
+
+    # 1. ahc_settings.py から filename 変数を探す
+    if os.path.exists(settings_path):
+        try:
+            with open(settings_path, "r", encoding="utf-8") as f:
+                content = f.read()
+                m = re.search(r'filename\s*=\s*["\'](.*?)["\']', content)
+                if m:
+                    src_filename = os.path.basename(m.group(1))
+        except: pass
+
+    # 2. 見つからない場合はディレクトリ内のソースっぽいファイルを探す
+    if not src_filename and os.path.exists(dir_path):
+        for f in os.listdir(dir_path):
+            if (f.endswith(".cpp") or f.endswith(".py") or f.endswith(".rs")) \
+               and f not in ["ahc_settings.py", "result.csv"]:
+                src_filename = f
+                break
+
+    if not src_filename:
+        src_filename = "main.cpp"
+
+    src_path = os.path.join(dir_path, src_filename)
+    if os.path.exists(src_path):
+        with open(src_path, "r", encoding="utf-8", errors="ignore") as f:
+            return f.read(), src_filename
+
+    # 古い保存形式のフォールバック (e.g. "./main.cpp" と保存されていた場合)
+    fallback_path = os.path.join(dir_path, ".", src_filename)
+    if os.path.exists(fallback_path):
+        with open(fallback_path, "r", encoding="utf-8", errors="ignore") as f:
+            return f.read(), src_filename
+
+    return "(ソースコードが保存されていません)", src_filename
 
 def load_in_file_content(filename):
     in_path = os.path.join("./in", filename)
@@ -175,8 +211,6 @@ def load_in_file_content(filename):
             return ""
     return ""
 
-
-# --- メタデータのキャッシュ機構（現状維持で最適化済み） ---
 _CACHE_META_DATA = None
 _CACHE_IN_FILES = []
 _CACHE_SETTINGS_MTIME = 0
@@ -243,16 +277,17 @@ app.layout = html.Div(className="layout-container", children=[
     dcc.Store(id="table-data", data=[]),
     dcc.Store(id="prev-selected-rows", data=[]),
     dcc.Store(id="target-ts-store", data=None),
+    html.Div(id="dummy-output", style={"display": "none"}),
 
     dcc.Interval(id="task-interval", interval=10000, n_intervals=0),
     dcc.Store(id="task-was-running", data=False),
 
     # === 左側：サイドバー ===
-    html.Div(id="sidebar-container", className="sidebar-base sidebar-unpinned", children=[
+    html.Div(id="sidebar-container", className="sidebar-base sidebar-pinned", children=[
         html.Div(className="sidebar-content", children=[
             html.Div(style={"display": "flex", "alignItems": "center", "marginBottom": "15px", "justifyContent": "space-between"}, children=[
                 html.H2("AHC Dashboard", style={"margin": "0", "fontSize": "20px"}),
-                html.Button("📌", id="pin-btn", className="btn-pin", title="サイドバーを固定する")
+                html.Button("◀", id="pin-btn", className="btn-pin", title="サイドバーの固定を解除する")
             ]),
 
             html.Div(className="card", style={"padding": "15px", "marginBottom": "20px", "backgroundColor": "#252525", "boxShadow": "inset 0 2px 4px rgba(0,0,0,0.5)"}, children=[
@@ -283,6 +318,7 @@ app.layout = html.Div(className="layout-container", children=[
                         {"name": "実行日時", "id": "formatted"},
                         {"name": "Ave", "id": "average_score", "type": "numeric", "format": {"specifier": ".2f"}},
                         {"name": "Rel", "id": "rel_ave", "type": "numeric", "format": {"specifier": ".3f"}},
+                        {"name": "Memo", "id": "memo", "editable": True},
                         {"name": "", "id": "delete_btn"},
                     ],
                     style_table={"width": "100%"},
@@ -296,6 +332,7 @@ app.layout = html.Div(className="layout-container", children=[
                         {"if": {"column_id": "is_base_str", "filter_query": "{is_base_str} = '★'"}, "color": "#ffca28"},
                         {"if": {"column_id": "is_base_str", "filter_query": "{is_base_str} = '・'"}, "color": "#666666"},
                         {"if": {"column_id": "delete_btn"}, "cursor": "pointer", "textAlign": "center", "width": "30px", "fontSize": "14px", "color": "#e57373"},
+                        {"if": {"column_id": "memo"}, "maxWidth": "80px", "textOverflow": "ellipsis", "overflow": "hidden", "whiteSpace": "nowrap", "backgroundColor": "#2a2a2a"},
 
                         {
                             "if": {
@@ -315,14 +352,14 @@ app.layout = html.Div(className="layout-container", children=[
                     row_selectable="multi",
                     selected_rows=[],
                 )
-            ])
+            ]),
+            html.Div("※ Memo列をクリックでメモを編集・自動保存できます", style={"fontSize": "11px", "color": "#888", "marginTop": "5px"})
         ])
     ]),
 
     # === 右側：メインコンテンツ ===
     html.Div(className="main-content", children=[
 
-        # 上部：グラフエリア
         html.Div(className="card", children=[
             html.Div(style={"display": "flex", "justifyContent": "space-between", "alignItems": "center", "marginBottom": "10px", "flexWrap": "wrap", "gap": "10px"}, children=[
                 html.Div(id="summary-text", style={"fontWeight": "bold", "color": "#ccc", "minWidth": "150px"}),
@@ -333,7 +370,7 @@ app.layout = html.Div(className="layout-container", children=[
                         options=[
                             {"label": html.Span("絶対スコア", style={"paddingLeft": "4px"}), "value": "abs"},
                             {"label": html.Span("相対スコア", style={"paddingLeft": "4px"}), "value": "rel"},
-                            {"label": html.Span("全体の箱ひげ図", style={"paddingLeft": "4px"}), "value": "box"},
+                            {"label": html.Span("箱ひげ図", style={"paddingLeft": "4px"}), "value": "box"},
                             {"label": html.Span("相関(散布図)", style={"paddingLeft": "4px"}), "value": "param_scatter"},
                             {"label": html.Span("相関(Box)", style={"paddingLeft": "4px"}), "value": "param_box"},
                             {"label": html.Span("相関(平均)", style={"paddingLeft": "4px"}), "value": "param_line"},
@@ -364,7 +401,6 @@ app.layout = html.Div(className="layout-container", children=[
             dcc.Graph(id="score-comparison-graph", style={"height": "350px"})
         ]),
 
-        # 下部：詳細エリア
         html.Div(className="card", style={"display": "flex", "gap": "20px", "flex": "1", "padding": "0", "overflow": "hidden", "minHeight": "400px"}, children=[
 
             html.Div(style={"flex": "1", "minWidth": "250px", "display": "flex", "flexDirection": "column", "borderRight": "1px solid #333", "padding": "20px"}, children=[
@@ -374,8 +410,10 @@ app.layout = html.Div(className="layout-container", children=[
                         id="file-name-table",
                         columns=[
                             {"name": "Case", "id": "name"},
-                            {"name": "Score", "id": "score"},
+                            {"name": "Score", "id": "score", "type": "numeric"},
                             {"name": "Time", "id": "time", "type": "numeric", "format": {"specifier": ".3f"}},
+                            {"name": "Best", "id": "best", "type": "numeric"},
+                            {"name": "Rel", "id": "rel", "type": "numeric", "format": {"specifier": ".3f"}},
                         ],
                         sort_action="native",
                         style_cell={"textAlign": "left", "padding": "8px", "fontFamily": "monospace", "fontSize": "13px", "backgroundColor": "#1e1e1e", "color": "#e0e0e0", "border": "1px solid #444"},
@@ -389,6 +427,7 @@ app.layout = html.Div(className="layout-container", children=[
             html.Div(style={"flex": "3", "display": "flex", "flexDirection": "column", "height": "100%", "minWidth": "0"}, children=[
                 dcc.Tabs(id="detail-tabs", value="tab-text", className="custom-tabs", children=[
                     dcc.Tab(label="標準出力 (err/out)", value="tab-text", className="custom-tab", selected_className="custom-tab--selected"),
+                    dcc.Tab(label="Diff (ソースコード)", value="tab-diff", className="custom-tab", selected_className="custom-tab--selected"),
                     dcc.Tab(label="ビジュアライザ", value="tab-vis", className="custom-tab", selected_className="custom-tab--selected"),
                 ]),
                 html.Div(id="tab-content", style={"flex": "1", "padding": "20px", "overflowY": "auto", "display": "flex", "flexDirection": "column", "minHeight": "0"})
@@ -397,7 +436,7 @@ app.layout = html.Div(className="layout-container", children=[
     ])
 ])
 
-# --- コールバック群 ---
+
 @app.callback(
     Output("target-ts-store", "data"),
     Output("prev-selected-rows", "data"),
@@ -484,10 +523,10 @@ def auto_reload_on_finish(n_int, was_running, reload_clicks):
     Output("pin-btn", "children"),
     Output("pin-btn", "title"),
     Input("pin-btn", "n_clicks"),
-    State("sidebar-container", "className")
+    State("sidebar-container", "className"),
+    prevent_initial_call=True
 )
 def toggle_sidebar_pin(n_clicks, current_class):
-    if n_clicks is None: return current_class, "📌", "サイドバーを固定する"
     if "sidebar-unpinned" in current_class:
         return "sidebar-base sidebar-pinned", "◀", "サイドバーの固定を解除する"
     else:
@@ -535,10 +574,42 @@ def update_param_options(n, current_x, current_y):
 def update_base_store(active_cell, table_data, current_base):
     if not active_cell or not table_data: return current_base
     if active_cell["column_id"] == "is_base_str":
+        base_ts = active_cell.get("row_id")
+        if base_ts:
+            return base_ts
         row_idx = active_cell["row"]
         if row_idx < len(table_data):
             return table_data[row_idx]["timestamp"]
     return current_base
+
+def get_memo(ts):
+    memo_path = os.path.join(BASE_PATH, ts, "memo.txt")
+    if os.path.exists(memo_path):
+        try:
+            with open(memo_path, "r", encoding="utf-8") as f:
+                return f.read().strip()
+        except: pass
+    return ""
+
+@app.callback(
+    Output("dummy-output", "children"),
+    Input("timestamp-table", "data"),
+    State("timestamp-table", "data_previous"),
+    prevent_initial_call=True
+)
+def save_memo(current_data, previous_data):
+    if current_data and previous_data:
+        for curr, prev in zip(current_data, previous_data):
+            c_memo = str(curr.get("memo", "")).strip()
+            p_memo = str(prev.get("memo", "")).strip()
+            if c_memo != p_memo:
+                ts = curr["timestamp"]
+                memo_path = os.path.join(BASE_PATH, ts, "memo.txt")
+                try:
+                    with open(memo_path, "w", encoding="utf-8") as f:
+                        f.write(c_memo)
+                except: pass
+    return dash.no_update
 
 @app.callback(
     Output("timestamp-table", "data"),
@@ -552,9 +623,13 @@ def update_table(n, base_ts, active_cell, current_data):
     triggered = ctx.triggered_id
 
     if triggered == "timestamp-table" and active_cell and active_cell.get("column_id") == "delete_btn":
-        row_idx = active_cell["row"]
-        if current_data and row_idx < len(current_data):
-            ts_to_delete = current_data[row_idx]["timestamp"]
+        ts_to_delete = active_cell.get("row_id")
+        if not ts_to_delete:
+            row_idx = active_cell["row"]
+            if current_data and row_idx < len(current_data):
+                ts_to_delete = current_data[row_idx]["timestamp"]
+
+        if ts_to_delete:
             dir_path = os.path.join(BASE_PATH, ts_to_delete)
             if os.path.exists(dir_path):
                 shutil.rmtree(dir_path)
@@ -584,9 +659,13 @@ def update_table(n, base_ts, active_cell, current_data):
     grouped["formatted"] = grouped["timestamp"].apply(format_timestamp)
     grouped["is_base_str"] = grouped["timestamp"].apply(lambda ts: "★" if ts == base_ts else "・")
     grouped["delete_btn"] = "🗑️"
+    grouped["memo"] = grouped["timestamp"].apply(get_memo)
     grouped = grouped.sort_values("timestamp")
 
     records = grouped.to_dict("records")
+    for r in records:
+        r["id"] = r["timestamp"]
+
     return records, records
 
 
@@ -630,13 +709,37 @@ def show_current_timestamp(target_ts):
 @app.callback(
     Output("file-name-table", "data"),
     Input("target-ts-store", "data"),
+    Input("base-store", "data")
 )
-def update_file_table(target_ts):
+def update_file_table(target_ts, base_ts):
     if not target_ts: return []
-    df = load_data()
-    df = df[df["timestamp"] == target_ts]
+    df_all = load_data()
+    if df_all.empty: return []
+
+    df_all["score"] = pd.to_numeric(df_all["score"], errors="coerce")
+
+    if DIRECTION == "minimize":
+        best_df = df_all.groupby("name")["score"].min().reset_index().rename(columns={"score": "best"})
+    else:
+        best_df = df_all.groupby("name")["score"].max().reset_index().rename(columns={"score": "best"})
+
+    df = df_all[df_all["timestamp"] == target_ts].copy()
+
+    if base_ts:
+        base_df = df_all[df_all["timestamp"] == base_ts][["name", "score"]].rename(columns={"score": "base_score"})
+        df = pd.merge(df, base_df, on="name", how="left")
+        df["rel"] = df.apply(lambda r: r["score"] / r["base_score"] if pd.notna(r["base_score"]) and r["base_score"] != 0 else 1.0, axis=1)
+    else:
+        df["rel"] = 1.0
+
+    df = pd.merge(df, best_df, on="name", how="left")
     df["time"] = pd.to_numeric(df["time"], errors="coerce")
-    return df[["name", "score", "time"]].to_dict("records")
+
+    records = df[["name", "score", "rel", "best", "time"]].to_dict("records")
+    for r in records:
+        r["id"] = r["name"]
+
+    return records
 
 @app.callback(
     Output("score-comparison-graph", "figure"),
@@ -689,7 +792,11 @@ def update_graph(rows, graph_type, param_x, param_y, log_scale, target_ts, table
         fig.update_layout(yaxis_title="Relative Score")
 
     elif graph_type == "box":
-        fig = px.box(df, x="timestamp", y="score", color="timestamp", category_orders={"timestamp": sorted_ts})
+        counts = df.groupby("timestamp").size()
+        df["ts_with_count"] = df["timestamp"].apply(lambda t: f"{t}<br>(n={counts.get(t,0)})")
+        sorted_ts_labels = [f"{t}<br>(n={counts.get(t,0)})" for t in sorted_ts]
+        fig = px.box(df, x="ts_with_count", y="score", color="timestamp")
+        fig.update_xaxes(categoryorder="array", categoryarray=sorted_ts_labels)
         fig.update_layout(xaxis_title="Execution", yaxis_title="Score")
 
     elif graph_type.startswith("param_"):
@@ -803,26 +910,68 @@ def update_graph(rows, graph_type, param_x, param_y, log_scale, target_ts, table
     return fig, summary_msg
 
 
-# --- 変更：不要な全ファイル読み込み(load_err_out_files)を完全に削除 ---
 @app.callback(
     Output("tab-content", "children"),
     Input("detail-tabs", "value"),
     Input("file-name-table", "active_cell"),
-    State("file-name-table", "data"),
     Input("target-ts-store", "data"),
+    State("file-name-table", "data"),
+    State("base-store", "data"),
+    State("table-data", "data") # 追加: 初期Base判定のため
 )
-def render_tab_content(tab, active_cell, file_data, target_ts):
-    if not active_cell or not file_data or not target_ts:
-        return html.Div("ファイルが選択されていません。", style={"color": "#ccc"})
+def render_tab_content(tab, active_cell, target_ts, file_data, base_ts, table_data):
+    if not target_ts:
+        return html.Div("対象の実行結果が選択されていません。", style={"color": "#ccc"})
 
-    if active_cell["row"] >= len(file_data):
-        return html.Div("ファイルが見つかりません。", style={"color": "#ccc"})
+    # Baseが未指定（初期状態）の場合、全体のテーブルデータから一番古いものをBaseとみなす
+    if not base_ts and table_data:
+        all_timestamps = sorted(list(set([r["timestamp"] for r in table_data])))
+        if all_timestamps:
+            base_ts = all_timestamps[0]
 
-    filename = file_data[active_cell["row"]]["name"]
+    # ==== 【1】ソースコードDiffタブ (ケースの選択は不要) ====
+    if tab == "tab-diff":
+        target_src, target_src_name = load_source_code(target_ts)
+        base_src, base_src_name = load_source_code(base_ts) if base_ts else ("", "")
+
+        if not base_ts:
+            diff_text = "(Baseとなる比較対象が見つかりません)"
+            src_label = target_src_name
+        else:
+            diff_lines = list(difflib.unified_diff(
+                base_src.splitlines(),
+                target_src.splitlines(),
+                fromfile=f"Base ({base_ts}/{base_src_name})",
+                tofile=f"Target ({target_ts}/{target_src_name})",
+                lineterm=""
+            ))
+            
+            diff_text = "\n".join(diff_lines)
+            if not diff_text.strip():
+                diff_text = "差分はありません (同一コードです)"
+            src_label = target_src_name or base_src_name
+
+        return html.Div(style={"display": "flex", "flexDirection": "column", "gap": "10px", "height": "100%"}, children=[
+            html.H4(f"ソースコード 差分 ({src_label}) [Base vs Target]", style={"margin": "0", "color": "#ccc"}),
+            html.Div(className="code-container", style={"flex": "1"}, children=[
+                dcc.Clipboard(content=diff_text, className="clipboard-btn"),
+                dcc.Textarea(value=diff_text, className="code-textarea", readOnly=True)
+            ])
+        ])
+
+    # ==== 【2】標準出力・ビジュアライザタブ (左のリストからケースの選択が必須) ====
+    if not active_cell or not file_data:
+        return html.Div("ファイルが選択されていません。左の表からCaseを選択してください。", style={"color": "#ccc"})
+
+    filename = active_cell.get("row_id")
+    if not filename:
+        if active_cell["row"] >= len(file_data):
+            return html.Div("ファイルが見つかりません。", style={"color": "#ccc"})
+        filename = file_data[active_cell["row"]]["name"]
+
     timestamp = target_ts
 
     if tab == "tab-text":
-        # ここでピンポイント読み込みを使用（激重処理を回避）
         err_text, out_text = load_single_err_out(timestamp, filename)
 
         return html.Div(style={"display": "flex", "flexDirection": "column", "gap": "20px", "height": "100%"}, children=[
@@ -844,7 +993,6 @@ def render_tab_content(tab, active_cell, file_data, target_ts):
 
     elif tab == "tab-vis":
         in_text = load_in_file_content(filename)
-        # ここもピンポイント読み込みに修正
         _, out_text = load_single_err_out(timestamp, filename)
         if out_text == "(outファイルなし)":
             out_text = ""

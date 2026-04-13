@@ -365,12 +365,15 @@ class ParallelTester:
         self.output_dir += dt_now.strftime("%Y-%m-%d_%H-%M-%S")
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
-        with open(
-            os.path.join(self.output_dir, self.filename), "w", encoding="utf-8"
-        ) as outs:
-            with open(self.filename, "r", encoding="utf-8") as inps:
-                for line in inps:
-                    outs.write(line)
+        src_basename = os.path.basename(self.filename)
+        try:
+            shutil.copy2(self.filename, os.path.join(self.output_dir, src_basename))
+        except Exception as e:
+            logger.warning(f"Failed to copy source file {self.filename}: {e}")
+        try:
+            shutil.copy2("ahc_settings.py", os.path.join(self.output_dir, "ahc_settings.py"))
+        except Exception as e:
+            logger.warning(f"Failed to copy ahc_settings.py: {e}")
 
         if record:
             if not os.path.exists(f"{self.output_dir}/err/"):
