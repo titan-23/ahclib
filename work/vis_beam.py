@@ -1,119 +1,26 @@
 import json
 import os
 import dash
-from dash import html, dcc, Input, Output, State, ALL, callback_context
+from dash import html, dcc, Input, Output, State, callback_context
 import dash_cytoscape as cyto
-
-cyto.load_extra_layouts()
 import plotly.graph_objects as go
+from beam_config import (
+    DARK_THEME,
+    BASE_STYLESHEET,
+    tab_style,
+    tab_selected_style,
+    generate_assets,
+)
+from beam_data import load_and_process_data
+from visualizer import generate_board_visual
 import time
 
-app = dash.Dash(__name__, update_title=None)
+cyto.load_extra_layouts()
+generate_assets()
 
-DARK_THEME = {
-    "background": "#1e1e1e",
-    "panel": "#252526",
-    "text": "#d4d4d4",
-    "border": "#333",
-    "accent": "#1976d2",
-    "pruned": "#555555",
-    "invalid": "#d32f2f",
-    "highlight": "#ffeb3b",
-    "inf": "#8e24aa",
-}
+_DATA_CACHE = {"processed": {}}
 
-BASE_STYLESHEET = [
-    {
-        "selector": "node",
-        "style": {
-            "label": "data(label)",
-            "text-valign": "center",
-            "text-halign": "center",
-            "font-size": "10px",
-            "width": "60px",
-            "height": "30px",
-            "shape": "rectangle",
-            "color": "#ffffff",
-            "text-wrap": "wrap",
-            "border-width": "0px",
-        },
-    },
-    {"selector": ".status-active", "style": {"background-color": DARK_THEME["accent"]}},
-    {
-        "selector": ".status-pruned",
-        "style": {
-            "background-color": DARK_THEME["pruned"],
-            "width": "10px",
-            "height": "10px",
-            "font-size": "0px",
-        },
-    },
-    {
-        "selector": ".status-invalid",
-        "style": {
-            "background-color": DARK_THEME["invalid"],
-            "width": "8px",
-            "height": "8px",
-            "font-size": "0px",
-        },
-    },
-    {
-        "selector": ".folded",
-        "style": {
-            "border-width": "3px",
-            "border-color": "#ffffff",
-            "border-style": "double",
-        },
-    },
-    {
-        "selector": ".searched",
-        "style": {"border-width": "4px", "border-color": "#00ff00"},
-    },
-    {
-        "selector": ".heatmap-node",
-        "style": {
-            "background-color": "data(bg_color)",
-            "color": "#ffffff",
-            "text-outline-width": "1px",
-            "text-outline-color": "#000000",
-        },
-    },
-    {
-        "selector": "edge",
-        "style": {
-            "curve-style": "bezier",
-            "target-arrow-shape": "triangle",
-            "width": 2,
-            "line-color": "#666666",
-            "target-arrow-color": "#666666",
-            "events": "no",
-        },
-    },
-    {
-        "selector": ".dummy-edge",
-        "style": {
-            "line-style": "dashed",
-            "line-color": "#444444",
-            "target-arrow-color": "#444444",
-        },
-    },
-]
-
-tab_style = {
-    "backgroundColor": "#2d2d30",
-    "color": "#d4d4d4",
-    "border": f'1px solid {DARK_THEME["border"]}',
-    "padding": "10px",
-    "cursor": "pointer",
-}
-
-tab_selected_style = {
-    "backgroundColor": DARK_THEME["accent"],
-    "color": "#ffffff",
-    "border": f'1px solid {DARK_THEME["accent"]}',
-    "padding": "10px",
-    "cursor": "pointer",
-}
+app = dash.Dash(__name__, update_title=None, suppress_callback_exceptions=True)
 
 app.layout = html.Div(
     style={
@@ -127,30 +34,34 @@ app.layout = html.Div(
     children=[
         dcc.Store(id="full-data-store"),
         dcc.Store(id="collapsed-nodes-store", data=[]),
-        dcc.Store(id="comparison-nodes-store", data=[]),
+        dcc.Store(id="bookmark-nodes-store", data=[]),
         dcc.Interval(id="auto-play-interval", interval=1000, disabled=True),
+        dcc.Store(id="show-goal-path-store", data=False),
+        # 上部コントロールパネル
         html.Div(
             style={
                 "padding": "10px",
                 "borderBottom": f'1px solid {DARK_THEME["border"]}',
                 "backgroundColor": DARK_THEME["panel"],
                 "display": "flex",
-                "gap": "20px",
-                "flexWrap": "wrap",
+                "gap": "15px",
                 "alignItems": "center",
             },
             children=[
                 html.Div(
-                    style={"flex": "1", "minWidth": "300px"},
+                    style={"flex": "1", "minWidth": "250px"},
                     children=[
-                        html.Label("表示ターン区間:", style={"fontWeight": "bold"}),
+                        html.Label(
+                            "表示ターン区間:",
+                            style={"fontWeight": "bold", "fontSize": "12px"},
+                        ),
                         dcc.RangeSlider(
                             id="turn-range-slider",
                             min=0,
                             max=1,
                             step=1,
                             value=[0, 1],
-                            marks={0: "0"},
+                            marks=None,
                             tooltip={"placement": "bottom", "always_visible": True},
                         ),
                     ],
@@ -160,24 +71,61 @@ app.layout = html.Div(
                         html.Button(
                             "再読み込み",
                             id="reload-button",
-                            style={"marginRight": "10px"},
+                            className="modern-btn",
+                            style={"marginRight": "10px", "backgroundColor": "#4caf50"},
                         ),
-                        html.Button("再生", id="play-button", n_clicks=0),
-                        html.Label(
-                            " (←/→キーで1ターン移動)",
-                            style={"fontSize": "12px", "marginLeft": "5px"},
+                        html.Button(
+                            "再生", id="play-button", n_clicks=0, className="modern-btn"
                         ),
                     ]
+                ),
+                html.Div(
+                    style={
+                        "display": "flex",
+                        "alignItems": "center",
+                        "width": "160px",
+                        "marginLeft": "15px",
+                    },
+                    children=[
+                        html.Label(
+                            "速度:",
+                            style={
+                                "fontWeight": "bold",
+                                "fontSize": "12px",
+                                "marginRight": "5px",
+                            },
+                        ),
+                        html.Div(
+                            style={"flex": "1"},
+                            children=[
+                                dcc.Slider(
+                                    id="playback-speed-slider",
+                                    min=1,
+                                    max=10,
+                                    step=1,
+                                    value=4,
+                                    marks=None,
+                                    tooltip={
+                                        "placement": "bottom",
+                                        "always_visible": False,
+                                    },
+                                )
+                            ],
+                        ),
+                    ],
                 ),
                 html.Div(
                     children=[
                         dcc.Input(
                             id="search-input",
-                            placeholder="スコアまたはActionで検索...",
+                            placeholder="スコア/Action/Hash検索...",
                             style={"padding": "5px"},
                         ),
                         html.Button(
-                            "検索", id="search-button", style={"marginLeft": "5px"}
+                            "検索",
+                            id="search-button",
+                            className="modern-btn",
+                            style={"marginLeft": "5px"},
                         ),
                     ]
                 ),
@@ -192,30 +140,85 @@ app.layout = html.Div(
                                 },
                                 {"label": " スコアヒートマップ", "value": "heatmap"},
                             ],
-                            value=["show_pruned"],
+                            value=[],
+                            style={"fontSize": "13px"},
                         )
+                    ]
+                ),
+                html.Div(
+                    children=[
+                        dcc.RadioItems(
+                            id="tree-direction-toggle",
+                            options=[
+                                {"label": " 横(LR) ", "value": "LR"},
+                                {"label": " 縦(TB) ", "value": "TB"},
+                            ],
+                            value="LR",
+                            inline=True,
+                            style={
+                                "display": "flex",
+                                "gap": "10px",
+                                "marginLeft": "10px",
+                                "fontWeight": "bold",
+                                "fontSize": "13px",
+                            },
+                        )
+                    ]
+                ),
+                html.Div(
+                    children=[
+                        html.Button(
+                            "破棄ノード一括折畳/展開",
+                            id="fold-all-pruned-button",
+                            className="modern-btn",
+                            style={
+                                "backgroundColor": "#f57c00",
+                                "fontSize": "12px",
+                                "padding": "5px 10px",
+                                "marginLeft": "10px",
+                            },
+                        ),
+                        html.Button(
+                            "🏁 ゴール経路強調",
+                            id="highlight-goal-button",
+                            className="modern-btn",
+                            style={
+                                "backgroundColor": "#e91e63",
+                                "fontSize": "12px",
+                                "padding": "5px 10px",
+                                "marginLeft": "10px",
+                            },
+                        ),
                     ]
                 ),
                 html.Div(
                     id="hover-action-output",
                     style={
-                        "marginLeft": "20px",
+                        "marginLeft": "auto",
                         "fontWeight": "bold",
                         "color": DARK_THEME["highlight"],
-                        "minWidth": "200px",
+                        "minWidth": "150px",
                     },
                 ),
             ],
         ),
+        # メインパネル
         html.Div(
-            style={"display": "flex", "flex": "1", "overflow": "hidden"},
+            style={
+                "display": "flex",
+                "flex": "1",
+                "overflow": "hidden",
+                "position": "relative",
+            },
             children=[
+                # 左側パネル
                 html.Div(
+                    id="left-panel-container",
                     style={
-                        "flex": "3",
+                        "flex": "1",
                         "display": "flex",
                         "flexDirection": "column",
-                        "borderRight": f'1px solid {DARK_THEME["border"]}',
+                        "transition": "flex 0.3s ease",
                     },
                     children=[
                         dcc.Tabs(
@@ -228,67 +231,51 @@ app.layout = html.Div(
                                     style=tab_style,
                                     selected_style=tab_selected_style,
                                     children=[
-                                        cyto.Cytoscape(
-                                            id="cytoscape-tree",
-                                            layout={
-                                                "name": "dagre",
-                                                "rankDir": "LR",  # 描画方向を Left-to-Right に変更
-                                                "nodeSep": 5,  # 同じ階層内のノード間隔を極小化
-                                                "rankSep": 40,  # 階層（ターン）間の間隔
-                                                "spacingFactor": 1,  # 全体をさらに圧縮
-                                            },
+                                        html.Div(
                                             style={
+                                                "position": "relative",
                                                 "width": "100%",
                                                 "height": "calc(100vh - 150px)",
                                             },
-                                            stylesheet=BASE_STYLESHEET,
-                                            elements=[],
-                                            zoom=1.0,
-                                            minZoom=0.05,
-                                            maxZoom=5.0,
-                                            autoungrabify=True,
-                                            wheelSensitivity=0.2,
+                                            children=[
+                                                html.Button(
+                                                    "🔍 全体を表示",
+                                                    id="fit-button",
+                                                    className="modern-btn",
+                                                    style={
+                                                        "position": "absolute",
+                                                        "top": "10px",
+                                                        "right": "10px",
+                                                        "zIndex": "1000",
+                                                        "backgroundColor": "#8e24aa",
+                                                        "padding": "6px 12px",
+                                                    },
+                                                ),
+                                                cyto.Cytoscape(
+                                                    id="cytoscape-tree",
+                                                    layout={
+                                                        "name": "dagre",
+                                                        "rankDir": "LR",
+                                                        "nodeSep": 5,
+                                                        "rankSep": 40,
+                                                        "spacingFactor": 0.8,
+                                                        "animate": False,
+                                                        "fit": True,
+                                                    },
+                                                    style={
+                                                        "width": "100%",
+                                                        "height": "100%",
+                                                    },
+                                                    stylesheet=BASE_STYLESHEET,
+                                                    elements=[],
+                                                    zoom=1.0,
+                                                    minZoom=0.02,
+                                                    maxZoom=5.0,
+                                                    autoungrabify=True,
+                                                    wheelSensitivity=0.2,
+                                                ),
+                                            ],
                                         )
-                                        # cyto.Cytoscape(
-                                        #     id="cytoscape-tree",
-                                        #     layout={
-                                        #         "name": "dagre",  # breadthfirst から変更
-                                        #         "nodeSep": 30,  # ノードの左右の最低間隔
-                                        #         "rankSep": 80,  # 階層の上下の最低間隔
-                                        #     },
-                                        #     style={
-                                        #         "width": "100%",
-                                        #         "height": "calc(100vh - 150px)",
-                                        #     },
-                                        #     stylesheet=BASE_STYLESHEET,
-                                        #     elements=[],
-                                        #     zoom=1.0,
-                                        #     minZoom=0.05,
-                                        #     maxZoom=5.0,
-                                        #     autoungrabify=True,
-                                        #     wheelSensitivity=0.2,
-                                        # )
-                                        # 元
-                                        # cyto.Cytoscape(
-                                        #     id="cytoscape-tree",
-                                        #     layout={
-                                        #         "name": "breadthfirst",
-                                        #         "roots": "#-1",
-                                        #         "directed": True,
-                                        #         "spacingFactor": 1.1,
-                                        #     },
-                                        #     style={
-                                        #         "width": "100%",
-                                        #         "height": "calc(100vh - 150px)",
-                                        #     },
-                                        #     stylesheet=BASE_STYLESHEET,
-                                        #     elements=[],
-                                        #     zoom=1.0,
-                                        #     minZoom=0.05,
-                                        #     maxZoom=5.0,
-                                        #     autoungrabify=True,
-                                        #     wheelSensitivity=0.2,
-                                        # )
                                     ],
                                 ),
                                 dcc.Tab(
@@ -303,168 +290,207 @@ app.layout = html.Div(
                                         )
                                     ],
                                 ),
+                                dcc.Tab(
+                                    label="ターン統計",
+                                    value="tab-stats",
+                                    style=tab_style,
+                                    selected_style=tab_selected_style,
+                                    children=[
+                                        html.Div(
+                                            id="turn-stats-container",
+                                            style={
+                                                "height": "calc(100vh - 150px)",
+                                                "overflowY": "auto",
+                                                "padding": "10px",
+                                            },
+                                        )
+                                    ],
+                                ),
                             ],
                         )
                     ],
                 ),
+                # 右側パネル
                 html.Div(
-                    style={
-                        "flex": "2",
-                        "backgroundColor": DARK_THEME["panel"],
-                        "padding": "10px",
-                        "overflowY": "auto",
-                    },
+                    id="right-panel-container",
+                    className="right-panel right-panel-pinned",
                     children=[
-                        dcc.Tabs(
-                            id="info-tabs",
-                            value="tab-detail",
+                        html.Div(
+                            id="right-panel-toggle-btn",
+                            className="panel-toggle-btn",
+                            style={"display": "none"},
+                            children="◀",
+                        ),
+                        html.Div(
+                            style={
+                                "display": "flex",
+                                "justifyContent": "space-between",
+                                "alignItems": "center",
+                                "backgroundColor": "#2d2d30",
+                                "padding": "5px 10px",
+                                "borderBottom": "1px solid #1e1e1e",
+                            },
                             children=[
-                                dcc.Tab(
-                                    label="詳細",
-                                    value="tab-detail",
-                                    style=tab_style,
-                                    selected_style=tab_selected_style,
-                                    children=[
-                                        html.Div(
-                                            style={"marginTop": "15px"},
-                                            children=[
-                                                html.Button(
-                                                    "この枝を折りたたむ/展開",
-                                                    id="toggle-fold-button",
-                                                    style={
-                                                        "padding": "5px 10px",
-                                                        "cursor": "pointer",
-                                                    },
-                                                ),
-                                                html.Button(
-                                                    "破棄ノード一括折りたたみ/展開",
-                                                    id="fold-all-pruned-button",
-                                                    style={
-                                                        "marginLeft": "10px",
-                                                        "padding": "5px 10px",
-                                                        "cursor": "pointer",
-                                                    },
-                                                ),
-                                                html.Button(
-                                                    "比較リストに追加",
-                                                    id="add-comparison-button",
-                                                    style={
-                                                        "marginLeft": "10px",
-                                                        "padding": "5px 10px",
-                                                        "cursor": "pointer",
-                                                    },
-                                                ),
-                                                html.Pre(
-                                                    id="node-detail-output",
-                                                    style={
-                                                        "whiteSpace": "pre-wrap",
-                                                        "backgroundColor": "#1e1e1e",
-                                                        "padding": "10px",
-                                                        "marginTop": "10px",
-                                                        "border": f'1px solid {DARK_THEME["border"]}',
-                                                    },
-                                                ),
-                                                html.Label(
-                                                    "Action Path:",
-                                                    style={
-                                                        "fontWeight": "bold",
-                                                        "marginTop": "15px",
-                                                        "display": "block",
-                                                    },
-                                                ),
-                                                html.Div(
-                                                    style={"position": "relative"},
-                                                    children=[
-                                                        dcc.Textarea(
-                                                            id="action-path-output",
-                                                            readOnly=True,
-                                                            placeholder="根からこのノードまでの操作列がここに表示されます",
-                                                            style={
-                                                                "width": "100%",
-                                                                "height": "80px",
-                                                                "backgroundColor": "#1e1e1e",
-                                                                "color": "#d4d4d4",
-                                                                "border": f'1px solid {DARK_THEME["border"]}',
-                                                                "borderRadius": "4px",
-                                                                "fontFamily": "monospace",
-                                                                "padding": "8px",
-                                                                "paddingRight": "35px",  # アイコンが被らないように右側の余白を確保
-                                                                "resize": "none",
-                                                            },
-                                                        ),
-                                                        dcc.Clipboard(
-                                                            target_id="action-path-output",
-                                                            title="コピー",
-                                                            style={
-                                                                "position": "absolute",
-                                                                "top": "8px",
-                                                                "right": "8px",
-                                                                "color": "#d4d4d4",
-                                                                "cursor": "pointer",
-                                                                "fontSize": "20px",
-                                                            },
-                                                        ),
-                                                    ],
-                                                ),
-                                            ],
-                                        )
-                                    ],
+                                html.Span(
+                                    "詳細パネル",
+                                    style={
+                                        "fontWeight": "bold",
+                                        "fontSize": "12px",
+                                        "color": "#aaa",
+                                    },
                                 ),
-                                dcc.Tab(
-                                    label="経路比較",
-                                    value="tab-compare",
-                                    style=tab_style,
-                                    selected_style=tab_selected_style,
-                                    children=[
-                                        html.Button(
-                                            "比較リストをクリア",
-                                            id="clear-comparison-button",
-                                            style={
-                                                "marginTop": "10px",
-                                                "padding": "5px 10px",
-                                                "cursor": "pointer",
-                                            },
-                                        ),
-                                        html.Div(
-                                            id="comparison-output",
-                                            style={"marginTop": "15px"},
-                                        ),
-                                    ],
-                                ),
-                                dcc.Tab(
-                                    label="スコア推移",
-                                    value="tab-score",
-                                    style=tab_style,
-                                    selected_style=tab_selected_style,
-                                    children=[
-                                        dcc.Graph(
-                                            id="score-history-graph",
-                                            config={"displayModeBar": False},
-                                            style={"marginTop": "15px"},
-                                        )
-                                    ],
-                                ),
-                                dcc.Tab(
-                                    label="盤面状態",
-                                    value="tab-state",
-                                    style=tab_style,
-                                    selected_style=tab_selected_style,
-                                    children=[
-                                        html.Pre(
-                                            id="node-state-output",
-                                            style={
-                                                "whiteSpace": "pre-wrap",
-                                                "backgroundColor": "#1e1e1e",
-                                                "padding": "10px",
-                                                "marginTop": "10px",
-                                                "border": f'1px solid {DARK_THEME["border"]}',
-                                            },
-                                        )
-                                    ],
+                                html.Button(
+                                    "📌 ピン留め解除",
+                                    id="pin-toggle-btn",
+                                    style={
+                                        "background": "none",
+                                        "border": "none",
+                                        "color": "#ccc",
+                                        "cursor": "pointer",
+                                        "fontSize": "12px",
+                                        "fontWeight": "bold",
+                                    },
                                 ),
                             ],
-                            style={"height": "44px"},
-                        )
+                        ),
+                        html.Div(
+                            style={"padding": "10px", "flex": "1", "overflowY": "auto"},
+                            children=[
+                                dcc.Tabs(
+                                    id="info-tabs",
+                                    value="tab-detail",
+                                    children=[
+                                        dcc.Tab(
+                                            label="詳細",
+                                            value="tab-detail",
+                                            style=tab_style,
+                                            selected_style=tab_selected_style,
+                                            children=[
+                                                html.Div(
+                                                    style={"marginTop": "15px"},
+                                                    children=[
+                                                        html.Button(
+                                                            "枝を折畳む/展開",
+                                                            id="toggle-fold-button",
+                                                            className="modern-btn",
+                                                        ),
+                                                        html.Button(
+                                                            "⭐ ブックマークに追加",
+                                                            id="toggle-bookmark-button",
+                                                            className="modern-btn",
+                                                            style={
+                                                                "marginLeft": "10px",
+                                                                "backgroundColor": DARK_THEME[
+                                                                    "bookmark"
+                                                                ],
+                                                                "color": "#000",
+                                                            },
+                                                        ),
+                                                        html.Pre(
+                                                            id="node-detail-output",
+                                                            style={
+                                                                "whiteSpace": "pre-wrap",
+                                                                "backgroundColor": "#1e1e1e",
+                                                                "padding": "10px",
+                                                                "marginTop": "15px",
+                                                                "border": f'1px solid {DARK_THEME["border"]}',
+                                                            },
+                                                        ),
+                                                        html.Label(
+                                                            "Action Path:",
+                                                            style={
+                                                                "fontWeight": "bold",
+                                                                "marginTop": "15px",
+                                                                "display": "block",
+                                                            },
+                                                        ),
+                                                        html.Div(
+                                                            style={
+                                                                "position": "relative"
+                                                            },
+                                                            children=[
+                                                                dcc.Textarea(
+                                                                    id="action-path-output",
+                                                                    readOnly=True,
+                                                                    placeholder="根からこのノードまでの操作列",
+                                                                    style={
+                                                                        "width": "100%",
+                                                                        "height": "80px",
+                                                                        "backgroundColor": "#1e1e1e",
+                                                                        "color": "#d4d4d4",
+                                                                        "border": f'1px solid {DARK_THEME["border"]}',
+                                                                        "borderRadius": "4px",
+                                                                        "fontFamily": "monospace",
+                                                                        "padding": "8px",
+                                                                        "paddingRight": "35px",
+                                                                        "resize": "none",
+                                                                    },
+                                                                ),
+                                                                dcc.Clipboard(
+                                                                    target_id="action-path-output",
+                                                                    title="コピー",
+                                                                    style={
+                                                                        "position": "absolute",
+                                                                        "top": "8px",
+                                                                        "right": "8px",
+                                                                        "color": "#d4d4d4",
+                                                                        "cursor": "pointer",
+                                                                        "fontSize": "20px",
+                                                                    },
+                                                                ),
+                                                            ],
+                                                        ),
+                                                    ],
+                                                )
+                                            ],
+                                        ),
+                                        dcc.Tab(
+                                            label="ブックマーク",
+                                            value="tab-bookmark",
+                                            style=tab_style,
+                                            selected_style=tab_selected_style,
+                                            children=[
+                                                html.Div(
+                                                    id="bookmark-list-output",
+                                                    style={"marginTop": "15px"},
+                                                )
+                                            ],
+                                        ),
+                                        dcc.Tab(
+                                            label="スコア推移",
+                                            value="tab-score",
+                                            style=tab_style,
+                                            selected_style=tab_selected_style,
+                                            children=[
+                                                dcc.Graph(
+                                                    id="score-history-graph",
+                                                    config={"displayModeBar": False},
+                                                    style={"marginTop": "15px"},
+                                                )
+                                            ],
+                                        ),
+                                        dcc.Tab(
+                                            label="盤面状態",
+                                            value="tab-state",
+                                            style=tab_style,
+                                            selected_style=tab_selected_style,
+                                            children=[
+                                                html.Div(
+                                                    id="node-state-output",
+                                                    style={
+                                                        "marginTop": "10px",
+                                                        "backgroundColor": "#1e1e1e",
+                                                        "border": f'1px solid {DARK_THEME["border"]}',
+                                                        "minHeight": "100px",
+                                                    },
+                                                )
+                                            ],
+                                        ),
+                                    ],
+                                    style={"height": "44px"},
+                                )
+                            ],
+                        ),
                     ],
                 ),
             ],
@@ -482,16 +508,10 @@ app.layout = html.Div(
     Input("keyboard-manager", "children"),
 )
 def load_data(n_clicks, _):
-    path = "history.json"
-    if not os.path.exists(path):
-        return {}, 1, {0: "0"}
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    nodes = data.get("nodes", [])
-    max_t = max([n["turn"] for n in nodes]) if nodes else 1
-    marks = {i: str(i) for i in range(0, max_t + 1) if i % 10 == 0 or i == max_t}
-    return data, max_t, marks
+    global _DATA_CACHE
+    processed, max_t, marks = load_and_process_data("history.json")
+    _DATA_CACHE["processed"] = processed
+    return {"ts": time.time()}, max_t, None
 
 
 @app.callback(
@@ -505,57 +525,89 @@ def load_data(n_clicks, _):
     prevent_initial_call=True,
 )
 def handle_play(n_clicks, n_intervals, current_range, max_t):
-    ctx = callback_context
-    trigger = ctx.triggered[0]["prop_id"]
-
+    trigger = callback_context.triggered[0]["prop_id"]
     if "play-button" in trigger:
         is_disabled = n_clicks % 2 == 0
-        label = "再生" if is_disabled else "停止"
-        return current_range, label, is_disabled
-
+        return current_range, "再生" if is_disabled else "停止", is_disabled
     if "auto-play-interval" in trigger:
         new_max = current_range[1] + 1
         if new_max > max_t:
             return [current_range[0], current_range[1]], "再生", True
         return [current_range[0], new_max], "停止", False
-
     return current_range, "再生", True
 
 
 @app.callback(
     Output("cytoscape-tree", "elements"),
+    Output("cytoscape-tree", "layout"),
     Input("full-data-store", "data"),
     Input("turn-range-slider", "value"),
     Input("visibility-toggle", "value"),
     Input("collapsed-nodes-store", "data"),
+    Input("bookmark-nodes-store", "data"),
     Input("search-button", "n_clicks"),
     Input("left-tabs", "value"),
+    Input("tree-direction-toggle", "value"),
+    Input("fit-button", "n_clicks"),
     State("search-input", "value"),
+    State("cytoscape-tree", "elements"),
 )
 def update_elements(
-    data, turn_range, visibility, collapsed_ids, n_search, left_tab, search_query
+    store_signal,
+    turn_range,
+    visibility,
+    collapsed_ids,
+    bookmarked_ids,
+    n_search,
+    left_tab,
+    tree_direction,
+    n_fit,
+    search_query,
+    current_elements,
 ):
     if left_tab != "tab-tree":
-        return dash.no_update
-    if not data:
-        return []
-    inf_value = data.get("INF", 1e18)
-    nodes = data.get("nodes", [])
+        return dash.no_update, dash.no_update
 
-    snapshots_dict = {}
-    for s in data.get("snapshots", []):
-        snapshots_dict[s["turn"]] = {
-            "active": s["active_node_ids"],
-            "threshold": s.get("threshold", inf_value),
-        }
+    trigger = (
+        callback_context.triggered[0]["prop_id"] if callback_context.triggered else ""
+    )
+    do_fit = trigger in ["fit-button.n_clicks", "full-data-store.data", ""]
 
-    nodes_dict = {str(n["node_id"]): n for n in nodes}
-    show_pruned = "show_pruned" in visibility
-    use_heatmap = "heatmap" in visibility
+    layout_config = {
+        "name": "preset",
+        "animate": False,
+        "fit": do_fit,
+        "padding": 30,
+        "refresh": time.time(),
+    }
+
+    if trigger == "fit-button.n_clicks" and current_elements:
+        return current_elements, layout_config
+
+    processed = _DATA_CACHE.get("processed", {})
+    nodes = processed.get("current_data", {}).get("nodes", [])
+    if not nodes:
+        return [], dash.no_update
+
+    nodes_dict = processed.get("nodes_dict", {})
+    snapshots_dict = processed.get("snapshots_dict", {})
+    turn_stats = processed.get("turn_stats", {})
+    base_positions = processed.get("base_positions", {})
+    inf_value = processed.get("current_data", {}).get("INF", 1e18)
 
     min_t, max_t = turn_range
     active_path = set()
-    terminals = set(str(x) for x in snapshots_dict.get(max_t, {}).get("active", []))
+
+    valid_max_t = max_t
+    while valid_max_t >= min_t:
+        active_nodes = snapshots_dict.get(valid_max_t, {}).get("active", [])
+        if active_nodes:
+            terminals = set(str(x) for x in active_nodes)
+            break
+        valid_max_t -= 1
+    else:
+        terminals = set()
+
     curr = list(terminals)
     while curr:
         next_nodes = []
@@ -568,73 +620,91 @@ def update_elements(
         curr = next_nodes
     active_path.add("-1")
 
-    # メモ化を用いた折りたたみ判定の最適化
     collapsed_set = set(collapsed_ids)
-    hidden_memo = {}
+    is_ancestor_collapsed = {"-1": False}
+    for n in sorted(nodes, key=lambda x: x.get("turn", 0)):
+        nid = str(n["node_id"])
+        pid = str(n["parent_id"])
+        is_ancestor_collapsed[nid] = (
+            pid in collapsed_set
+        ) or is_ancestor_collapsed.get(pid, False)
 
-    def is_hidden(nid):
-        if nid in collapsed_set:
-            return True
-        if nid in hidden_memo:
-            return hidden_memo[nid]
+    show_pruned = "show_pruned" in visibility
+    use_heatmap = "heatmap" in visibility
 
-        node = nodes_dict.get(nid)
-        if not node:
-            return False
-
-        pid = str(node["parent_id"])
-        if pid == "-1":
-            hidden_memo[nid] = False
-            return False
-
-        res = is_hidden(pid)
-        hidden_memo[nid] = res
-        return res
-
-    elements = [{"data": {"id": "-1", "label": "Start"}, "classes": "status-active"}]
-    valid_ids = {"-1"}
-
-    valid_scores = [
-        n["score"]
-        for n in nodes
-        if min_t <= n["turn"] <= max_t and n["score"] < inf_value
-    ]
-    min_score = min(valid_scores) if valid_scores else 0
-    max_score = max(valid_scores) if valid_scores else 1
-
-    def get_heatmap_color(score):
+    def get_heatmap_color(score, turn):
         if score >= inf_value:
             return DARK_THEME["inf"]
-        ratio = (
-            0.5
-            if max_score == min_score
-            else (score - min_score) / (max_score - min_score)
-        )
-        r = int(25 + ratio * 186)
-        g = int(118 - ratio * 71)
-        b = int(210 - ratio * 163)
+        stats = turn_stats.get(turn)
+        if not stats:
+            return "rgb(128, 128, 128)"
+        t_min, t_max = stats["min"], stats["max"]
+        ratio = 0.5 if t_max == t_min else (score - t_min) / (t_max - t_min)
+        r, g, b = int(25 + ratio * 186), int(118 - ratio * 71), int(210 - ratio * 163)
         return f"rgb({r}, {g}, {b})"
 
+    if tree_direction == "TB":
+        depth_gap = 100  # 縦(Y)のターン間隔
+        breadth_gap = 70  # 横(X)のノード間隔
+    else:
+        depth_gap = 150  # 横(X)のターン間隔
+        breadth_gap = 40  # 縦(Y)のノード間隔
+
+    pos_start = base_positions.get("-1", {"depth": 0, "breadth_center": 0.0})
+    start_x = (
+        pos_start["breadth_center"] * breadth_gap
+        if tree_direction == "TB"
+        else pos_start["depth"] * depth_gap
+    )
+    start_y = (
+        pos_start["depth"] * depth_gap
+        if tree_direction == "TB"
+        else pos_start["breadth_center"] * breadth_gap
+    )
+
+    elements = [
+        {
+            "data": {"id": "-1", "label": "Start"},
+            "classes": "status-active",
+            "position": {"x": start_x, "y": start_y},
+        }
+    ]
+
+    valid_ids = {"-1"}
+
+    visible_nodes = []
     for n in nodes:
         nid = str(n["node_id"])
-        if not (min_t <= n["turn"] <= max_t):
+        if not (min_t <= n["turn"] <= max_t) or is_ancestor_collapsed.get(nid, False):
             continue
-        if is_hidden(nid):
+        if not show_pruned and nid not in active_path:
             continue
+        visible_nodes.append(n)
 
-        is_active = nid in active_path
-        if not show_pruned and not is_active:
-            continue
+    visible_nodes.sort(key=lambda x: (x["turn"], x["parent_id"], x["score"]))
 
-        cls = (
-            "status-invalid"
-            if n["status"] == 2
-            else ("status-active" if is_active else "status-pruned")
-        )
+    for n in visible_nodes:
+        nid = str(n["node_id"])
+        valid_ids.add(nid)
+
+        if n.get("is_answer", False):
+            cls = "status-answer"
+        elif n["status"] == 2:
+            cls = "status-invalid"
+        elif nid in active_path:
+            cls = "status-active"
+        else:
+            cls = "status-pruned"
+
         if nid in collapsed_ids:
             cls += " folded"
+        if nid in bookmarked_ids:
+            cls += " bookmarked"
+
         if search_query and (
-            search_query in str(n["score"]) or search_query in n.get("action", "")
+            search_query in str(n["score"])
+            or search_query in n.get("action", "")
+            or search_query in str(n.get("hash", ""))
         ):
             cls += " searched"
 
@@ -642,19 +712,31 @@ def update_elements(
             "data": {"id": nid, "label": f"T:{n['turn']}\nS:{n['score']}"},
             "classes": cls,
         }
+
+        pos = base_positions.get(nid, {"depth": 0, "breadth_center": 0.0})
+        if tree_direction == "TB":
+            depth_gap = 100  # 縦(Y)のターン間隔
+            breadth_gap = 70  # 横(X)のノード間隔
+            element["position"] = {
+                "x": pos["breadth_center"] * breadth_gap,
+                "y": pos["depth"] * depth_gap,
+            }
+        else:
+            depth_gap = 150  # 横(X)のターン間隔
+            breadth_gap = 40  # 縦(Y)のノード間隔
+            element["position"] = {
+                "x": pos["depth"] * depth_gap,
+                "y": pos["breadth_center"] * breadth_gap,
+            }
+
         if use_heatmap:
-            element["data"]["bg_color"] = get_heatmap_color(n["score"])
+            element["data"]["bg_color"] = get_heatmap_color(n["score"], n["turn"])
             element["classes"] += " heatmap-node"
 
         elements.append(element)
-        valid_ids.add(nid)
 
-    for n in nodes:
-        nid = str(n["node_id"])
-        if nid not in valid_ids:
-            continue
-
-        pid = str(n["parent_id"])
+    for n in visible_nodes:
+        nid, pid = str(n["node_id"]), str(n["parent_id"])
         if pid in valid_ids:
             elements.append(
                 {
@@ -679,35 +761,172 @@ def update_elements(
                 }
             )
 
-    return elements
+    layout_config = {
+        "name": "preset",
+        "animate": False,
+        "fit": do_fit,
+        "padding": 30,
+        "refresh": time.time(),
+    }
+
+    return elements, layout_config
+
+
+@app.callback(
+    Output("turn-stats-container", "children"), Input("full-data-store", "data")
+)
+def update_turn_stats(store_signal):
+    processed = _DATA_CACHE.get("processed")
+    if not processed:
+        return html.Div("データがありません", style={"padding": "20px"})
+
+    turn_stats = processed.get("turn_stats", {})
+
+    turns_int = sorted([int(t) for t in turn_stats.keys()])
+
+    if not turns_int:
+        return html.Div("統計データがありません", style={"padding": "20px"})
+
+    def get_stats(t):
+        return turn_stats.get(t) or turn_stats.get(str(t), {})
+
+    x_box, y_box = [], []
+    for t in turns_int:
+        for s in get_stats(t).get("scores", []):
+            x_box.append(t)
+            y_box.append(s)
+
+    fig_score = go.Figure(
+        go.Box(x=x_box, y=y_box, name="Score", marker_color=DARK_THEME["accent"])
+    )
+    fig_score.update_layout(
+        title="ターンごとのスコア分布",
+        template="plotly_dark",
+        margin=dict(l=20, r=20, t=40, b=20),
+        paper_bgcolor=DARK_THEME["panel"],
+        plot_bgcolor=DARK_THEME["background"],
+    )
+
+    y_div = [get_stats(t).get("unique_parents", 0) for t in turns_int]
+    fig_div = go.Figure(
+        go.Bar(x=turns_int, y=y_div, marker_color=DARK_THEME["bookmark"])
+    )
+    fig_div.update_layout(
+        title="生存ノードの親の数",
+        template="plotly_dark",
+        margin=dict(l=20, r=20, t=40, b=20),
+        paper_bgcolor=DARK_THEME["panel"],
+        plot_bgcolor=DARK_THEME["background"],
+    )
+
+    y_v, y_p, y_i = [], [], []
+    for t in turns_int:
+        s = get_stats(t)
+        y_v.append(
+            max(0, s.get("generated", 0) - s.get("pruned", 0) - s.get("invalid", 0))
+        )
+        y_p.append(s.get("pruned", 0))
+        y_i.append(s.get("invalid", 0))
+
+    fig_status = go.Figure(
+        data=[
+            go.Bar(name="有効", x=turns_int, y=y_v, marker_color=DARK_THEME["accent"]),
+            go.Bar(name="破棄", x=turns_int, y=y_p, marker_color=DARK_THEME["pruned"]),
+            go.Bar(name="無効", x=turns_int, y=y_i, marker_color=DARK_THEME["invalid"]),
+        ]
+    )
+    fig_status.update_layout(
+        title="ノード生成内訳",
+        barmode="stack",
+        template="plotly_dark",
+        margin=dict(l=20, r=20, t=40, b=20),
+        paper_bgcolor=DARK_THEME["panel"],
+        plot_bgcolor=DARK_THEME["background"],
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+
+    y_common = [get_stats(t).get("common_ancestor_depth", 0) for t in turns_int]
+    fig_common = go.Figure(
+        go.Scatter(
+            x=turns_int, y=y_common, mode="lines+markers", line=dict(color="#00bcd4")
+        )
+    )
+    fig_common.update_layout(
+        title="有効ノードの共通祖先の深さ",
+        template="plotly_dark",
+        margin=dict(l=20, r=20, t=40, b=20),
+        paper_bgcolor=DARK_THEME["panel"],
+        plot_bgcolor=DARK_THEME["background"],
+    )
+    graph_style = {"marginTop": "10px", "height": "calc(100vh - 240px)"}
+    return [
+        dcc.Tabs(
+            id="stats-sub-tabs",
+            value="tab-score-dist",
+            children=[
+                dcc.Tab(
+                    label="スコア分布",
+                    value="tab-score-dist",
+                    style=tab_style,
+                    selected_style=tab_selected_style,
+                    children=[dcc.Graph(figure=fig_score, style=graph_style)],
+                ),
+                dcc.Tab(
+                    label="多様性",
+                    value="tab-diversity",
+                    style=tab_style,
+                    selected_style=tab_selected_style,
+                    children=[dcc.Graph(figure=fig_div, style=graph_style)],
+                ),
+                dcc.Tab(
+                    label="ノード生成内訳",
+                    value="tab-node-status",
+                    style=tab_style,
+                    selected_style=tab_selected_style,
+                    children=[dcc.Graph(figure=fig_status, style=graph_style)],
+                ),
+                dcc.Tab(
+                    label="共通祖先深さ",
+                    value="tab-common-ancestor",
+                    style=tab_style,
+                    selected_style=tab_selected_style,
+                    children=[dcc.Graph(figure=fig_common, style=graph_style)],
+                ),
+            ],
+            style={"height": "44px"},
+        ),
+    ]
 
 
 @app.callback(
     Output("all-paths-graph", "figure"),
     [Input("full-data-store", "data"), Input("turn-range-slider", "value")],
 )
-def update_all_graph(data, turn_range):
-    if not data:
+def update_all_graph(store_signal, turn_range):
+    processed = _DATA_CACHE.get("processed", {})
+    nodes = processed.get("current_data", {}).get("nodes", [])
+    if not nodes:
         return go.Figure()
-    nodes = data.get("nodes", [])
-    inf = data.get("INF", 1e18)
+
+    inf = processed.get("current_data", {}).get("INF", 1e18)
     min_t, max_t = turn_range
-    nodes_dict = {n["node_id"]: n for n in nodes}
-    start_base_score = 0
-    if nodes:
-        min_scores = [nn["score"] for nn in nodes if nn["turn"] == min_t]
-        start_base_score = min(min_scores) if min_scores else nodes[0]["score"]
+    nodes_dict = processed.get("nodes_dict", {})
+
+    start_base_score = min(
+        [nn["score"] for nn in nodes if nn["turn"] == min_t] or [nodes[0]["score"]]
+    )
 
     x, y = [], []
     for n in nodes:
         if not (min_t <= n["turn"] <= max_t) or n["score"] >= inf:
             continue
-        pid = n["parent_id"]
-        if pid != -1 and pid in nodes_dict:
-            p = nodes_dict[pid]
-            x += [p["turn"], n["turn"], None]
-            y += [p["score"], n["score"], None]
-        elif pid == -1:
+
+        # 修正箇所: parent_id を文字列に変換して比較・検索する
+        pid = str(n["parent_id"])
+        if pid != "-1" and pid in nodes_dict:
+            x += [nodes_dict[pid]["turn"], n["turn"], None]
+            y += [nodes_dict[pid]["score"], n["score"], None]
+        elif pid == "-1":
             x += [0, n["turn"], None]
             y += [start_base_score, n["score"], None]
 
@@ -739,263 +958,332 @@ def update_all_graph(data, turn_range):
         Output("score-history-graph", "figure"),
         Output("cytoscape-tree", "stylesheet"),
     ],
-    [Input("cytoscape-tree", "tapNodeData")],
+    [
+        Input("cytoscape-tree", "tapNodeData"),
+        Input("show-goal-path-store", "data"),
+    ],
     [State("full-data-store", "data")],
 )
-def display_node(node_data, data):
-    if not node_data or node_data["id"] == "-1":
-        # 出力値に空文字列を追加
+def display_node(node_data, show_goal, store_signal):
+    processed = _DATA_CACHE.get("processed", {})
+    if not processed:
         return "ノードを選択してください", "", "", go.Figure(), BASE_STYLESHEET
-    inf_value = data.get("INF", 1e18)
 
-    all_nodes = data.get("nodes", [])
-    valid_scores = [n["score"] for n in all_nodes if n["score"] < inf_value]
-    y_range = None
-    if valid_scores:
-        y_min = min(valid_scores)
-        y_max = max(valid_scores)
-        y_margin = (y_max - y_min) * 0.05
-        if y_margin == 0:
-            y_margin = 1
-        y_range = [y_min - y_margin, y_max + y_margin]
+    inf_value = processed.get("current_data", {}).get("INF", 1e18)
+    nodes_dict = processed.get("nodes_dict", {})
+    children_dict = processed.get("children_dict", {})
+    snapshots_dict = processed.get("snapshots_dict", {})
+    valid_scores = processed.get("valid_scores", [])
+    turn_stats = processed.get("turn_stats", {})
+    max_turn = max([int(t) for t in turn_stats.keys()]) if turn_stats else 10
 
-    snapshots_dict = {
-        s["turn"]: {
-            "active": s["active_node_ids"],
-            "threshold": s.get("threshold", inf_value),
-        }
-        for s in data.get("snapshots", [])
-    }
-    nodes_dict = {str(n["node_id"]): n for n in data["nodes"]}
-
-    target = nodes_dict.get(node_data["id"])
-    if not target:
-        return "Error", "", go.Figure(), BASE_STYLESHEET
-
-    detail = (
-        f"ID: {target['node_id']}\n"
-        f"Score: {target['score']}\n"
-        f"Turn: {target['turn']}\n"
-        f"Action: {target.get('action','')}\n"
-        f"Status: {target['status']}"
-    )
-    state_json = json.dumps(target.get("state_info", {}), indent=2, ensure_ascii=False)
-
-    # 祖先パスの取得
-    path_ids = []
-    curr = str(target["node_id"])
-    while curr != "-1":
-        path_ids.append(curr)
-        curr = str(nodes_dict[curr]["parent_id"]) if curr in nodes_dict else "-1"
-    path_ids.append("-1")
-    action_seq = "".join(
+    y_range = (
         [
-            nodes_dict[nid].get("action", "")
-            for nid in path_ids[::-1]
-            if nid in nodes_dict
+            min(valid_scores) - (max(valid_scores) - min(valid_scores)) * 0.05,
+            max(valid_scores) + (max(valid_scores) - min(valid_scores)) * 0.05,
         ]
+        if valid_scores
+        else None
     )
-    children_dict = {}
-    for n in all_nodes:
-        pid = str(n["parent_id"])
-        nid = str(n["node_id"])
-        if pid not in children_dict:
-            children_dict[pid] = []
-        children_dict[pid].append(nid)
 
-    subtree_node_ids = []
-    subtree_edge_ids = []
-    queue = [str(target["node_id"])]
-    while queue:
-        curr_node = queue.pop(0)
-        if curr_node != str(target["node_id"]):
-            subtree_node_ids.append(curr_node)
-        if curr_node in children_dict:
-            for child in children_dict[curr_node]:
-                subtree_edge_ids.append(f"e{curr_node}_{child}")
-                queue.append(child)
-    # ------------------------------
-
-    path_scores = [nodes_dict[nid]["score"] for nid in path_ids if nid in nodes_dict]
-    path_turns = [nodes_dict[nid]["turn"] for nid in path_ids if nid in nodes_dict]
-    path_thresholds = [
-        snapshots_dict[t]["threshold"] if t in snapshots_dict else None
-        for t in path_turns
-    ]
-
+    detail = "ノードを選択してください"
+    action_seq = ""
+    state_visual = html.Div(
+        "ノードを選択してください", style={"color": "#aaa", "padding": "10px"}
+    )
     fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=path_turns[::-1],
-            y=path_scores[::-1],
-            mode="lines+markers",
-            name="ノードスコア",
-            line=dict(color="#4fc3f7"),
-        )
-    )
-
-    val_th_x = []
-    val_th_y = []
-    for t, th in zip(path_turns[::-1], path_thresholds[::-1]):
-        if th is not None and th < inf_value:
-            val_th_x.append(t)
-            val_th_y.append(th)
-
-    if val_th_x:
-        fig.add_trace(
-            go.Scatter(
-                x=val_th_x,
-                y=val_th_y,
-                mode="lines",
-                name="閾値",
-                line=dict(color="#ff5252", dash="dash"),
-            )
-        )
-
-    fig.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=20, r=20, t=20, b=20),
-        height=300,
-        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
-        yaxis=dict(range=y_range) if y_range else None,
-    )
-
     new_styles = list(BASE_STYLESHEET)
 
-    # 部分木のノード強調（オレンジ）
-    if subtree_node_ids:
-        node_selectors = ", ".join([f'node[id="{nid}"]' for nid in subtree_node_ids])
-        new_styles.append(
-            {
-                "selector": node_selectors,
-                "style": {
-                    "border-width": "3px",
-                    "border-color": "#ff9800",
-                },
+    if node_data:
+        if node_data["id"] == "-1":
+            target = {
+                "node_id": "-1",
+                "score": "N/A",
+                "turn": 0,
+                "action": "Root",
+                "status": "Start",
             }
-        )
+        else:
+            target = nodes_dict.get(node_data["id"])
 
-    # 部分木のエッジ強調（オレンジ）
-    if subtree_edge_ids:
-        edge_selectors = ", ".join([f'edge[id="{eid}"]' for eid in subtree_edge_ids])
-        new_styles.append(
-            {
-                "selector": edge_selectors,
-                "style": {
-                    "width": 3,
-                    "line-color": "#ff9800",
-                    "target-arrow-color": "#ff9800",
-                },
-            }
-        )
+        if target:
+            detail = (
+                f"ID: {target['node_id']}\n"
+                f"Score: {target['score']}\n"
+                f"Turn: {target['turn']}\n"
+                f"Action: {target.get('action','')}\n"
+                f"Hash: {target.get('hash','N/A')}\n"
+                f"Status: {target.get('status','')}"
+            )
+            state_json = json.dumps(
+                target.get("state_info", {}), indent=2, ensure_ascii=False
+            )
 
-    # 祖先パスのノード強調（黄色）
-    if path_ids:
-        node_selectors = ", ".join([f'node[id="{nid}"]' for nid in path_ids])
-        new_styles.append(
-            {
-                "selector": node_selectors,
-                "style": {
-                    "border-width": "3px",
-                    "border-color": DARK_THEME["highlight"],
-                },
-            }
-        )
+            path_ids = []
+            curr = str(target["node_id"])
+            while curr != "-1" and curr in nodes_dict:
+                path_ids.append(curr)
+                curr = str(nodes_dict.get(curr, {}).get("parent_id", "-1"))
+            path_ids.append("-1")
 
-    # 祖先パスのエッジ強調（黄色）
-    path_edges_ids = []
-    for i in range(len(path_ids) - 1):
-        nid = path_ids[i]
-        pid = path_ids[i + 1]
-        path_edges_ids.append(f"e{pid}_{nid}")
+            action_seq = "".join(
+                [
+                    nodes_dict[nid].get("action", "")
+                    for nid in path_ids[::-1]
+                    if nid in nodes_dict
+                ]
+            )
+            state_visual = generate_board_visual(action_seq)
 
-    if path_edges_ids:
-        edge_selectors = ", ".join([f'edge[id="{eid}"]' for eid in path_edges_ids])
-        new_styles.append(
-            {
-                "selector": edge_selectors,
-                "style": {
-                    "width": 4,
-                    "line-color": DARK_THEME["highlight"],
-                    "target-arrow-color": DARK_THEME["highlight"],
-                },
-            }
-        )
+            subtree_node_ids, subtree_edge_ids, queue, target_id_str = (
+                [],
+                [],
+                [str(target["node_id"])],
+                str(target["node_id"]),
+            )
+            while queue:
+                curr_node = queue.pop()
+                if curr_node != target_id_str:
+                    subtree_node_ids.append(curr_node)
+                if curr_node in children_dict:
+                    for child in children_dict[curr_node]:
+                        subtree_edge_ids.append(f"e{curr_node}_{child}")
+                        queue.append(child)
 
-    return detail, action_seq, state_json, fig, new_styles
+            path_scores = [
+                nodes_dict[nid]["score"] for nid in path_ids if nid in nodes_dict
+            ]
+            path_turns = [
+                nodes_dict[nid]["turn"] for nid in path_ids if nid in nodes_dict
+            ]
+            path_thresholds = [
+                snapshots_dict[t]["threshold"] if t in snapshots_dict else None
+                for t in path_turns
+            ]
+
+            if path_turns:
+                fig.add_trace(
+                    go.Scatter(
+                        x=path_turns[::-1],
+                        y=path_scores[::-1],
+                        mode="lines+markers",
+                        name="ノードスコア",
+                        line=dict(color="#4fc3f7"),
+                    )
+                )
+
+            val_th_x = [
+                t
+                for t, th in zip(path_turns[::-1], path_thresholds[::-1])
+                if th is not None and isinstance(th, (int, float)) and th < inf_value
+            ]
+            val_th_y = [
+                th
+                for th in path_thresholds[::-1]
+                if th is not None and isinstance(th, (int, float)) and th < inf_value
+            ]
+            if val_th_x:
+                fig.add_trace(
+                    go.Scatter(
+                        x=val_th_x,
+                        y=val_th_y,
+                        mode="lines",
+                        name="閾値",
+                        line=dict(color="#ff5252", dash="dash"),
+                    )
+                )
+
+            fig.update_layout(
+                template="plotly_dark",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                margin=dict(l=20, r=20, t=20, b=20),
+                height=300,
+                legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+                yaxis=dict(range=y_range) if y_range else None,
+                xaxis=dict(range=[0, max_turn], title="Turn"),
+            )
+
+            if subtree_node_ids:
+                new_styles.append(
+                    {
+                        "selector": ",".join(
+                            [f'node[id="{nid}"]' for nid in subtree_node_ids]
+                        ),
+                        "style": {"border-width": "3px", "border-color": "#ff9800"},
+                    }
+                )
+            if subtree_edge_ids:
+                new_styles.append(
+                    {
+                        "selector": ",".join(
+                            [f'edge[id="{eid}"]' for eid in subtree_edge_ids]
+                        ),
+                        "style": {
+                            "width": 3,
+                            "line-color": "#ff9800",
+                            "target-arrow-color": "#ff9800",
+                        },
+                    }
+                )
+            if path_ids:
+                new_styles.append(
+                    {
+                        "selector": ",".join([f'node[id="{nid}"]' for nid in path_ids]),
+                        "style": {
+                            "border-width": "3px",
+                            "border-color": DARK_THEME["highlight"],
+                        },
+                    }
+                )
+
+            path_edges_ids = [
+                f"e{path_ids[i+1]}_{path_ids[i]}" for i in range(len(path_ids) - 1)
+            ]
+            if path_edges_ids:
+                new_styles.append(
+                    {
+                        "selector": ",".join(
+                            [f'edge[id="{eid}"]' for eid in path_edges_ids]
+                        ),
+                        "style": {
+                            "width": 4,
+                            "line-color": DARK_THEME["highlight"],
+                            "target-arrow-color": DARK_THEME["highlight"],
+                        },
+                    }
+                )
+
+    if show_goal:
+        goal_nodes = [n for n in nodes_dict.values() if n.get("is_answer", False)]
+        goal_path_ids = set()
+        goal_edge_ids = set()
+
+        for g in goal_nodes:
+            curr = str(g["node_id"])
+            while curr != "-1" and curr in nodes_dict:
+                goal_path_ids.add(curr)
+                p = str(nodes_dict[curr]["parent_id"])
+                if p != "-1" or curr != "-1":
+                    goal_edge_ids.add(f"e{p}_{curr}")
+                curr = p
+            goal_path_ids.add("-1")
+
+        if goal_path_ids:
+            new_styles.append(
+                {
+                    "selector": ",".join(
+                        [f'node[id="{nid}"]' for nid in goal_path_ids]
+                    ),
+                    "style": {
+                        "border-width": "5px",
+                        "border-color": "#00e5ff",
+                    },
+                }
+            )
+        if goal_edge_ids:
+            new_styles.append(
+                {
+                    "selector": ",".join(
+                        [f'edge[id="{eid}"]' for eid in goal_edge_ids]
+                    ),
+                    "style": {
+                        "width": 6,
+                        "line-color": "#00e5ff",
+                        "target-arrow-color": "#00e5ff",
+                        "z-index": "100",
+                    },
+                }
+            )
+
+    return detail, action_seq, state_visual, fig, new_styles
 
 
 @app.callback(
     Output("collapsed-nodes-store", "data"),
-    Output("comparison-nodes-store", "data"),
-    Output("comparison-output", "children"),
     Input("toggle-fold-button", "n_clicks"),
     Input("fold-all-pruned-button", "n_clicks"),
-    Input("add-comparison-button", "n_clicks"),
-    Input("clear-comparison-button", "n_clicks"),
     State("cytoscape-tree", "tapNodeData"),
     State("collapsed-nodes-store", "data"),
-    State("comparison-nodes-store", "data"),
-    State("full-data-store", "data"),
     prevent_initial_call=True,
 )
-def manage_stores(
-    n_fold, n_fold_all, n_add, n_clear, tap_data, collapsed, comparison, full_data
-):
-    ctx = dash.callback_context
-    trigger = ctx.triggered[0]["prop_id"]
-
-    if "clear-comparison-button" in trigger:
-        return collapsed, [], "リストは空です"
-
+def manage_folding(n_fold, n_fold_all, tap_data, collapsed):
+    trigger = callback_context.triggered[0]["prop_id"]
     if "fold-all-pruned-button" in trigger:
-        pruned_ids = [str(n["node_id"]) for n in full_data["nodes"] if n["status"] == 1]
-        active_collapsed_pruned = [c for c in collapsed if c in pruned_ids]
-        if active_collapsed_pruned:
+        nodes = (
+            _DATA_CACHE.get("processed", {}).get("current_data", {}).get("nodes", [])
+        )
+        pruned_ids = [str(n["node_id"]) for n in nodes if n["status"] == 1]
+        active_collapsed = [c for c in collapsed if c in pruned_ids]
+        if active_collapsed:
             collapsed = [c for c in collapsed if c not in pruned_ids]
         else:
-            for pid in pruned_ids:
-                if pid not in collapsed:
-                    collapsed.append(pid)
-    else:
-        if not tap_data or tap_data["id"] == "-1":
-            return collapsed, comparison, dash.no_update
-
+            collapsed.extend([pid for pid in pruned_ids if pid not in collapsed])
+    elif "toggle-fold-button" in trigger and tap_data and tap_data.get("id") != "-1":
         nid = tap_data["id"]
+        collapsed.remove(nid) if nid in collapsed else collapsed.append(nid)
+    return collapsed
 
-        if "toggle-fold-button" in trigger:
-            if nid in collapsed:
-                collapsed.remove(nid)
-            else:
-                collapsed.append(nid)
 
-        if "add-comparison-button" in trigger:
-            if nid not in comparison:
-                comparison.append(nid)
+@app.callback(
+    Output("bookmark-nodes-store", "data"),
+    Output("bookmark-list-output", "children"),
+    Output("toggle-bookmark-button", "children"),
+    Input("toggle-bookmark-button", "n_clicks"),
+    State("cytoscape-tree", "tapNodeData"),
+    State("bookmark-nodes-store", "data"),
+    prevent_initial_call=True,
+)
+def manage_bookmarks(n_clicks, tap_data, bookmarks):
+    btn_label = "⭐ ブックマークに追加"
+    if tap_data and tap_data.get("id") != "-1":
+        nid = tap_data["id"]
+        if nid in bookmarks:
+            bookmarks.remove(nid)
+        else:
+            bookmarks.append(nid)
+            btn_label = "⭐ ブックマークを解除"
 
-    nodes_dict = {str(n["node_id"]): n for n in full_data["nodes"]}
-    comp_elements = []
-    for cid in comparison:
-        node = nodes_dict.get(cid)
+    processed = _DATA_CACHE.get("processed", {})
+    nodes_dict = processed.get("nodes_dict", {})
+
+    elements = []
+    for bid in bookmarks:
+        node = nodes_dict.get(bid)
         if node:
-            comp_elements.append(
+            elements.append(
                 html.Div(
                     style={
                         "border": "1px solid #444",
                         "padding": "10px",
                         "marginBottom": "10px",
+                        "backgroundColor": "#2d2d30",
                     },
                     children=[
-                        html.B(f"Node {cid}"),
-                        html.P(f"Score: {node['score']} | Turn: {node['turn']}"),
-                        html.P(f"Action: {node.get('action','')}"),
+                        html.B(
+                            f"Node ID: {bid}", style={"color": DARK_THEME["bookmark"]}
+                        ),
+                        html.P(
+                            f"Turn: {node['turn']} | Score: {node['score']}",
+                            style={"margin": "5px 0"},
+                        ),
+                        html.P(
+                            f"Action: {node.get('action', '')} | Hash: {node.get('hash', 'N/A')}",
+                            style={"margin": "0", "fontSize": "11px"},
+                        ),
                     ],
                 )
             )
 
-    return collapsed, comparison, comp_elements if comp_elements else "リストは空です"
+    return (
+        bookmarks,
+        (
+            elements
+            if elements
+            else html.Div("ブックマークはありません", style={"color": "#aaa"})
+        ),
+        btn_label,
+    )
 
 
 @app.callback(
@@ -1003,56 +1291,69 @@ def manage_stores(
     Input("cytoscape-tree", "mouseoverEdgeData"),
 )
 def display_hover_edge(edge_data):
-    if edge_data and "action" in edge_data:
-        return f"ホバー中のAction: {edge_data['action']}"
-    return ""
-
-
-# @app.callback(
-#     Output("cytoscape-tree", "layout"),
-#     Input("left-tabs", "value"),
-#     prevent_initial_call=True,
-# )
-# def redraw_tree_layout(tab_value):
-#     if tab_value == "tab-tree":
-#         return {
-#             "name": "breadthfirst",
-#             "roots": "#-1",
-#             "directed": True,
-#             "spacingFactor": 1.1,
-#             "refresh": time.time(),  # 差分を強制的に検知させるダミー値
-#         }
-#     return dash.no_update
-
-# @app.callback(
-#     Output("cytoscape-tree", "layout"),
-#     Input("left-tabs", "value"),
-#     prevent_initial_call=True,
-# )
-# def redraw_tree_layout(tab_value):
-#     if tab_value == "tab-tree":
-#         return {"name": "dagre", "nodeSep": 30, "rankSep": 40, "refresh": time.time()}
-#     return dash.no_update
+    return (
+        f"Action: {edge_data['action']}" if edge_data and "action" in edge_data else ""
+    )
 
 
 @app.callback(
-    Output("cytoscape-tree", "layout"),
-    Input("left-tabs", "value"),
+    Output("right-panel-container", "className"),
+    Output("right-panel-toggle-btn", "style"),
+    Output("pin-toggle-btn", "children"),
+    Output("right-panel-toggle-btn", "children"),
+    Input("pin-toggle-btn", "n_clicks"),
+    Input("right-panel-toggle-btn", "n_clicks"),
+    State("right-panel-container", "className"),
     prevent_initial_call=True,
 )
-def redraw_tree_layout(tab_value):
-    import time
+def toggle_right_panel(pin_clicks, toggle_clicks, current_class):
+    trigger = callback_context.triggered[0]["prop_id"]
+    is_pinned = "right-panel-pinned" in current_class
+    is_open = "open" in current_class
 
-    if tab_value == "tab-tree":
-        return {
-            "name": "dagre",
-            "rankDir": "LR",
-            "nodeSep": 5,
-            "rankSep": 40,
-            "spacingFactor": 0.8,
-            "refresh": time.time(),
-        }
-    return dash.no_update
+    if "pin-toggle-btn" in trigger:
+        is_pinned, is_open = not is_pinned, False
+    elif "right-panel-toggle-btn" in trigger:
+        is_open = not is_open
+
+    if is_pinned:
+        return (
+            "right-panel right-panel-pinned",
+            {"display": "none"},
+            "📌 ピン留め解除",
+            "◀",
+        )
+    return (
+        f"right-panel right-panel-unpinned{' open' if is_open else ''}",
+        {"display": "flex"},
+        "📌 ピン留めする",
+        "▶" if is_open else "◀",
+    )
+
+
+@app.callback(
+    Output("auto-play-interval", "interval"),
+    Input("playback-speed-slider", "value"),
+)
+def update_playback_speed(speed_level):
+    max_interval = 1500
+    min_interval = 50
+    progress = (speed_level - 1) / 9.0
+    current_interval = max_interval - int((max_interval - min_interval) * progress)
+    return current_interval
+
+
+@app.callback(
+    Output("show-goal-path-store", "data"),
+    Output("highlight-goal-button", "children"),
+    Input("highlight-goal-button", "n_clicks"),
+    State("show-goal-path-store", "data"),
+    prevent_initial_call=True,
+)
+def toggle_goal_path(n_clicks, is_active):
+    new_state = not is_active
+    label = "🏁 ゴール経路を解除" if new_state else "🏁 ゴール経路を強調"
+    return new_state, label
 
 
 if __name__ == "__main__":

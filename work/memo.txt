@@ -1,0 +1,4 @@
+
+            // TODO min_state -> is_done
+            // TODO pre_action
+            // TODO State() {} // コンストラクタはつけないほうがいいかも
