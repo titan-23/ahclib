@@ -224,6 +224,7 @@ public:
             action.nxt_t = 0;
         }
         action.target_turn = (action.nxt_turn)*N*N + (action.nxt_s)*N + (action.nxt_t);
+        if (nxt_score - 100*2 >= thresholds[action.target_turn]) return {INF, 0, 0};
 
         SArray ns = S[i];
         TArray nt = T[j];
@@ -242,7 +243,6 @@ public:
             }
         }
 
-        if (nxt_score - 100*2 >= thresholds[action.target_turn]) return {INF, 0, 0};
         nxt_score -= calc_score_S(i, S[i]) + calc_score_T(j, T[j]);
         nxt_score += calc_score_S(i, ns) + calc_score_T(j, nt);
         rep(tc, N) {
@@ -393,7 +393,7 @@ struct S {
 
 void solve() {
     beam_search::beam_init();
-    auto param = beam_search::gen_param(1e4, 120);
+    auto param = beam_search::gen_param(1e4, 100);
     auto result = beam_search::search(param, true);
     cerr << "resulit.size()=" << result.size() << endl;
     vector<vector<S>> ans;

@@ -2,7 +2,6 @@ import optuna
 from typing import Optional, Callable
 from ahclib.ahc_util import avg_score, geo_score
 
-
 """example
 python3 -m ahclib test -v -c -r
 python3 -m opt -w
@@ -15,17 +14,15 @@ class AHCSettings:
 
     # parallel_tester -------------------- #
     direction = "minimize"  # minimize / maximize
-
     njobs = 100
+    timeout = None
 
     filename = "./main.cpp"
     compile_command = (
-        "g++ ./main.cpp -O2 -std=c++20 -o a.out -I./../../../Library_cpp -march=native"
+        f"g++ {filename} -O2 -std=c++20 -o a.out -I./../../../Library_cpp -march=native"
     )
     execute_command = "./a.out"
     input_file_names = [f"./in/{str(i).zfill(4)}.txt" for i in range(100)]
-
-    timeout = None
 
     use_relative_score = False
     pre_dir_name = ""
@@ -36,21 +33,6 @@ class AHCSettings:
         # return geo_score(socres)
         scores = list(filter(lambda x: x is not None, scores))
         return sum(scores) / len(scores)
-
-    # visualize -------------------------- #
-
-    @staticmethod
-    def parse_input_params(file_path: str) -> dict:
-        """ ./in/ 以下のファイルを読み込み、パラメータを辞書で返す """
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-            res = {}
-            # TODO
-            res["N"], res["M"] = map(int, lines[0].split())
-            return res
-        except Exception:
-            return {}
 
     # optimizer -------------------------- #
     # study_name
@@ -69,4 +51,21 @@ class AHCSettings:
         end_temp = start_temp * k
         return (start_temp, end_temp)
 
-    # ------------------------------------ #
+    # visualize -------------------------- #
+
+    @staticmethod
+    def parse_input_params(file_path: str) -> dict:
+        """./in/ 以下のファイルを読み込み、パラメータを辞書で返す"""
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            res = {}
+            # TODO
+            res["N"], res["M"] = map(int, lines[0].split())
+            return res
+        except Exception:
+            return {}
+
+    # vis_beam ---------------------------------- #
+
+    vis_beam_input = ""

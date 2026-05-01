@@ -6,7 +6,6 @@ import importlib.util
 import argparse
 import shutil
 from logging import basicConfig
-import subprocess
 import os
 import click
 

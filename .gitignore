@@ -1,6 +1,7 @@
 .vscode/
 *.in
 *.out
+out.txt
 
 /ahclibs.egg-info/
 /dist/
