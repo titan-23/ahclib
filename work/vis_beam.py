@@ -1,7 +1,7 @@
 import json
 import os
 import dash
-from dash import html, dcc, Input, Output, State, callback_context
+from dash import html, dcc, Input, Output, State, callback_context, ALL
 import dash_cytoscape as cyto
 import plotly.graph_objects as go
 from beam_config import (
@@ -35,9 +35,9 @@ app.layout = html.Div(
         dcc.Store(id="full-data-store"),
         dcc.Store(id="collapsed-nodes-store", data=[]),
         dcc.Store(id="bookmark-nodes-store", data=[]),
+        dcc.Store(id="clicked-child-store", data=None),
         dcc.Interval(id="auto-play-interval", interval=1000, disabled=True),
         dcc.Store(id="show-goal-path-store", data=False),
-        # 上部コントロールパネル
         html.Div(
             style={
                 "padding": "10px",
@@ -202,7 +202,6 @@ app.layout = html.Div(
                 ),
             ],
         ),
-        # メインパネル
         html.Div(
             style={
                 "display": "flex",
@@ -211,7 +210,6 @@ app.layout = html.Div(
                 "position": "relative",
             },
             children=[
-                # 左側パネル
                 html.Div(
                     id="left-panel-container",
                     style={
@@ -310,7 +308,6 @@ app.layout = html.Div(
                         )
                     ],
                 ),
-                # 右側パネル
                 html.Div(
                     id="right-panel-container",
                     className="right-panel right-panel-pinned",
@@ -386,15 +383,9 @@ app.layout = html.Div(
                                                                 "color": "#000",
                                                             },
                                                         ),
-                                                        html.Pre(
+                                                        html.Div(
                                                             id="node-detail-output",
-                                                            style={
-                                                                "whiteSpace": "pre-wrap",
-                                                                "backgroundColor": "#1e1e1e",
-                                                                "padding": "10px",
-                                                                "marginTop": "15px",
-                                                                "border": f'1px solid {DARK_THEME["border"]}',
-                                                            },
+                                                            style={"marginTop": "15px"}
                                                         ),
                                                         html.Label(
                                                             "Action Path:",
@@ -644,11 +635,11 @@ def update_elements(
         return f"rgb({r}, {g}, {b})"
 
     if tree_direction == "TB":
-        depth_gap = 100  # 縦(Y)のターン間隔
-        breadth_gap = 70  # 横(X)のノード間隔
+        depth_gap = 200
+        breadth_gap = 100
     else:
-        depth_gap = 150  # 横(X)のターン間隔
-        breadth_gap = 40  # 縦(Y)のノード間隔
+        depth_gap = 300
+        breadth_gap = 60
 
     pos_start = base_positions.get("-1", {"depth": 0, "breadth_center": 0.0})
     start_x = (
@@ -670,19 +661,27 @@ def update_elements(
         }
     ]
 
-    valid_ids = {"-1"}
-
-    visible_nodes = []
+    visible_ids = set()
     for n in nodes:
         nid = str(n["node_id"])
-        if not (min_t <= n["turn"] <= max_t) or is_ancestor_collapsed.get(nid, False):
+        if is_ancestor_collapsed.get(nid, False):
             continue
-        if not show_pruned and nid not in active_path:
-            continue
-        visible_nodes.append(n)
+        if min_t <= n["turn"] <= max_t:
+            if not show_pruned and nid not in active_path:
+                continue
+            visible_ids.add(nid)
+            curr_pid = str(n["parent_id"])
+            while curr_pid != "-1" and curr_pid not in visible_ids:
+                if curr_pid in nodes_dict and nodes_dict[curr_pid]["turn"] < min_t:
+                    visible_ids.add(curr_pid)
+                    curr_pid = str(nodes_dict[curr_pid]["parent_id"])
+                else:
+                    break
 
+    visible_nodes = [nodes_dict[nid] for nid in visible_ids if nid in nodes_dict]
     visible_nodes.sort(key=lambda x: (x["turn"], x["parent_id"], x["score"]))
 
+    valid_ids = {"-1"}
     for n in visible_nodes:
         nid = str(n["node_id"])
         valid_ids.add(nid)
@@ -708,6 +707,9 @@ def update_elements(
         ):
             cls += " searched"
 
+        if n["turn"] < min_t:
+            cls += " out-of-range"
+
         element = {
             "data": {"id": nid, "label": f"T:{n['turn']}\nS:{n['score']}"},
             "classes": cls,
@@ -715,15 +717,11 @@ def update_elements(
 
         pos = base_positions.get(nid, {"depth": 0, "breadth_center": 0.0})
         if tree_direction == "TB":
-            depth_gap = 100  # 縦(Y)のターン間隔
-            breadth_gap = 70  # 横(X)のノード間隔
             element["position"] = {
                 "x": pos["breadth_center"] * breadth_gap,
                 "y": pos["depth"] * depth_gap,
             }
         else:
-            depth_gap = 150  # 横(X)のターン間隔
-            breadth_gap = 40  # 縦(Y)のノード間隔
             element["position"] = {
                 "x": pos["depth"] * depth_gap,
                 "y": pos["breadth_center"] * breadth_gap,
@@ -921,7 +919,6 @@ def update_all_graph(store_signal, turn_range):
         if not (min_t <= n["turn"] <= max_t) or n["score"] >= inf:
             continue
 
-        # 修正箇所: parent_id を文字列に変換して比較・検索する
         pid = str(n["parent_id"])
         if pid != "-1" and pid in nodes_dict:
             x += [nodes_dict[pid]["turn"], n["turn"], None]
@@ -951,6 +948,28 @@ def update_all_graph(store_signal, turn_range):
 
 
 @app.callback(
+    Output("clicked-child-store", "data"),
+    Input({"type": "child-node-btn", "index": ALL}, "n_clicks"),
+    Input("cytoscape-tree", "tapNodeData"),
+    prevent_initial_call=True
+)
+def handle_child_click(n_clicks_list, tap_data):
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return dash.no_update
+    trigger_id_str = ctx.triggered[0]["prop_id"].split(".")[0]
+
+    if trigger_id_str == "cytoscape-tree":
+        return None
+
+    try:
+        trigger_id = json.loads(trigger_id_str)
+        return trigger_id["index"]
+    except:
+        return dash.no_update
+
+
+@app.callback(
     [
         Output("node-detail-output", "children"),
         Output("action-path-output", "value"),
@@ -961,13 +980,14 @@ def update_all_graph(store_signal, turn_range):
     [
         Input("cytoscape-tree", "tapNodeData"),
         Input("show-goal-path-store", "data"),
+        Input("clicked-child-store", "data"),
     ],
     [State("full-data-store", "data")],
 )
-def display_node(node_data, show_goal, store_signal):
+def display_node(node_data, show_goal, clicked_child, store_signal):
     processed = _DATA_CACHE.get("processed", {})
     if not processed:
-        return "ノードを選択してください", "", "", go.Figure(), BASE_STYLESHEET
+        return html.Div("ノードを選択してください", style={"color": "#aaa", "padding": "10px"}), "", "", go.Figure(), BASE_STYLESHEET
 
     inf_value = processed.get("current_data", {}).get("INF", 1e18)
     nodes_dict = processed.get("nodes_dict", {})
@@ -986,13 +1006,20 @@ def display_node(node_data, show_goal, store_signal):
         else None
     )
 
-    detail = "ノードを選択してください"
+    detail_elements = html.Div("ノードを選択してください", style={"color": "#aaa", "padding": "10px"})
     action_seq = ""
     state_visual = html.Div(
         "ノードを選択してください", style={"color": "#aaa", "padding": "10px"}
     )
     fig = go.Figure()
     new_styles = list(BASE_STYLESHEET)
+
+    new_styles.append({
+        "selector": ".out-of-range",
+        "style": {
+            "opacity": 0.4
+        }
+    })
 
     if node_data:
         if node_data["id"] == "-1":
@@ -1007,7 +1034,7 @@ def display_node(node_data, show_goal, store_signal):
             target = nodes_dict.get(node_data["id"])
 
         if target:
-            detail = (
+            detail_text = (
                 f"ID: {target['node_id']}\n"
                 f"Score: {target['score']}\n"
                 f"Turn: {target['turn']}\n"
@@ -1018,6 +1045,43 @@ def display_node(node_data, show_goal, store_signal):
             state_json = json.dumps(
                 target.get("state_info", {}), indent=2, ensure_ascii=False
             )
+
+            children_ids = children_dict.get(str(target["node_id"]), [])
+
+            child_btns_container = None
+            if children_ids:
+                btn_list = []
+                for cid in children_ids:
+                    is_active = (str(cid) == str(clicked_child))
+                    bg_color = "#ffeb3b" if is_active else DARK_THEME["accent"]
+                    color = "#000" if is_active else "#fff"
+                    btn_list.append(html.Button(
+                        f"ID: {cid}",
+                        id={"type": "child-node-btn", "index": str(cid)},
+                        className="modern-btn",
+                        style={"backgroundColor": bg_color, "color": color, "fontSize": "11px", "padding": "4px 8px"}
+                    ))
+                child_btns_container = html.Div(
+                    style={"marginTop": "10px", "backgroundColor": "#1e1e1e", "padding": "10px", "border": f'1px solid {DARK_THEME["border"]}'},
+                    children=[
+                        html.Span("子ノード:", style={"fontWeight": "bold", "fontSize": "12px", "display": "block", "marginBottom": "5px"}),
+                        html.Div(btn_list, style={"display": "flex", "flexWrap": "wrap", "gap": "5px"})
+                    ]
+                )
+
+            detail_elements = html.Div([
+                html.Pre(
+                    detail_text,
+                    style={
+                        "whiteSpace": "pre-wrap",
+                        "backgroundColor": "#1e1e1e",
+                        "padding": "10px",
+                        "margin": "0",
+                        "border": f'1px solid {DARK_THEME["border"]}',
+                    }
+                ),
+                child_btns_container if child_btns_container else html.Div()
+            ])
 
             path_ids = []
             curr = str(target["node_id"])
@@ -1154,6 +1218,24 @@ def display_node(node_data, show_goal, store_signal):
                     }
                 )
 
+            if clicked_child:
+                new_styles.append(
+                    {
+                        "selector": f'node[id="{clicked_child}"]',
+                        "style": {
+                            "border-width": "5px",
+                            "border-color": "#ffeb3b",
+                            "background-color": "#ffeb3b",
+                            "color": "#000",
+                            "font-size": "14px",
+                            "font-weight": "bold",
+                            "width": "45px",
+                            "height": "45px",
+                            "z-index": "100"
+                        },
+                    }
+                )
+
     if show_goal:
         goal_nodes = [n for n in nodes_dict.values() if n.get("is_answer", False)]
         goal_path_ids = set()
@@ -1196,7 +1278,7 @@ def display_node(node_data, show_goal, store_signal):
                 }
             )
 
-    return detail, action_seq, state_visual, fig, new_styles
+    return detail_elements, action_seq, state_visual, fig, new_styles
 
 
 @app.callback(
