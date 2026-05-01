@@ -210,56 +210,75 @@ def load_and_process_data(filepath="history.json"):
                 arranged.appendleft(k)
         children_dict[pid] = list(arranged)
 
-    MIN_GAP = 1.0
+        MIN_GAP = 1.0
 
-    def layout_subtree(nid):
-        kids = children_dict.get(nid, [])
-        depth = nodes_dict[nid]["turn"] if nid in nodes_dict else 0
+        node_offsets = {}
 
-        if not kids:
-            return {nid: 0.0}, {depth: 0.0}, {depth: 0.0}
+        def calculate_layout_pass1(nid):
+            kids = children_dict.get(nid, [])
+            depth = nodes_dict[nid]["turn"] if nid in nodes_dict else 0
 
-        child_layouts = [layout_subtree(k) for k in kids]
+            if not kids:
+                node_offsets[nid] = 0.0
+                return {depth: 0.0}, {depth: 0.0}
 
-        merged_pos, left_contour, right_contour = child_layouts[0]
+            c_left_0, c_right_0 = calculate_layout_pass1(kids[0])
+            left_contour = dict(c_left_0)
+            right_contour = dict(c_right_0)
 
-        for i in range(1, len(kids)):
-            curr_pos, curr_left, curr_right = child_layouts[i]
+            kid_shifts = [0.0]
 
-            shift = 0.0
-            for d in right_contour:
-                if d in curr_left:
-                    req = right_contour[d] - curr_left[d] + MIN_GAP
-                    if req > shift:
-                        shift = req
+            for i in range(1, len(kids)):
+                c_left, c_right = calculate_layout_pass1(kids[i])
 
-            for k in curr_pos:
-                merged_pos[k] = curr_pos[k] + shift
+                shift = 0.0
+                for d in right_contour:
+                    if d in c_left:
+                        req = right_contour[d] - c_left[d] + MIN_GAP
+                        if req > shift:
+                            shift = req
 
-            for d, val in curr_left.items():
-                shifted_val = val + shift
-                if d not in left_contour or shifted_val < left_contour[d]:
-                    left_contour[d] = shifted_val
+                kid_shifts.append(shift)
 
-            for d, val in curr_right.items():
-                shifted_val = val + shift
-                if d not in right_contour or shifted_val > right_contour[d]:
-                    right_contour[d] = shifted_val
+                for d, val in c_left.items():
+                    shifted_val = val + shift
+                    if d not in left_contour or shifted_val < left_contour[d]:
+                        left_contour[d] = shifted_val
 
-        # # 3. 親の位置は、「両端の子の中央」に配置（平均値による偏りを排除）
-        kid_centers = [merged_pos[k] for k in kids]
-        parent_x = (kid_centers[0] + kid_centers[-1]) / 2.0
-        merged_pos[nid] = parent_x
+                for d, val in c_right.items():
+                    shifted_val = val + shift
+                    if d not in right_contour or shifted_val > right_contour[d]:
+                        right_contour[d] = shifted_val
 
-        if depth not in left_contour or parent_x < left_contour[depth]:
-            left_contour[depth] = parent_x
-        if depth not in right_contour or parent_x > right_contour[depth]:
-            right_contour[depth] = parent_x
+            # 3. 親の位置は、「両端の子の中央」に配置（平均値による偏りを排除）
+            parent_x = (kid_shifts[0] + kid_shifts[-1]) / 2.0
 
-        return merged_pos, left_contour, right_contour
+            for i, child in enumerate(kids):
+                node_offsets[child] = kid_shifts[i] - parent_x
 
-    # ルートから一括で計算を実行
-    positions, _, _ = layout_subtree("-1")
+            left_contour = {d: v - parent_x for d, v in left_contour.items()}
+            right_contour = {d: v - parent_x for d, v in right_contour.items()}
+
+            if depth not in left_contour or 0.0 < left_contour[depth]:
+                left_contour[depth] = 0.0
+            if depth not in right_contour or 0.0 > right_contour[depth]:
+                right_contour[depth] = 0.0
+
+            return left_contour, right_contour
+
+    # パス1: ボトムアップで相対座標と輪郭を計算
+    calculate_layout_pass1("-1")
+
+    positions = {}
+
+    def calculate_layout_pass2(nid, current_x):
+        positions[nid] = current_x
+        for child in children_dict.get(nid, []):
+            child_x = current_x + node_offsets.get(child, 0.0)
+            calculate_layout_pass2(child, child_x)
+
+    # パス2: トップダウンで絶対座標を確定
+    calculate_layout_pass2("-1", 0.0)
 
     # 未配置ノードのフォールバック
     for nid in nodes_dict:
@@ -273,6 +292,7 @@ def load_and_process_data(filepath="history.json"):
             "breadth_center": positions.get("-1", 0.0),
         }
     }
+
     for nid, node in nodes_dict.items():
         base_positions[nid] = {
             "depth": node["turn"],

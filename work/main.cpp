@@ -181,9 +181,7 @@ public:
     ScoreType calc_score_T(int c, const TArray &q) const {
         ScoreType s = 0;
         rep(i, q.size()) {
-            if (i) {
-                if (is_consecutive(q[i-1], q[i])) s -= 100;
-            }
+            if (i && is_consecutive(q[i-1], q[i])) s -= 100;
             s += abs(c - q[i]/10);
         }
         return s;
@@ -244,6 +242,7 @@ public:
             }
         }
 
+        if (nxt_score - 100*2 >= thresholds[action.target_turn]) return {INF, 0, 0};
         nxt_score -= calc_score_S(i, S[i]) + calc_score_T(j, T[j]);
         nxt_score += calc_score_S(i, ns) + calc_score_T(j, nt);
         rep(tc, N) {
@@ -383,7 +382,7 @@ flying_squirrel::BeamParam gen_param(int max_turn, int beam_width, double time_l
 }
 
 vector<Action> search(flying_squirrel::BeamParam &param, const bool verbose=false) {
-    flying_squirrel::BeamSearchWithTree<ScoreType, HashType, Action, State, INF, true> bs;
+    flying_squirrel::BeamSearchWithTree<ScoreType, HashType, Action, State, INF, false> bs;
     return bs.search(param, verbose, "history.json");
 }
 } // namespace beam_search
@@ -394,7 +393,7 @@ struct S {
 
 void solve() {
     beam_search::beam_init();
-    auto param = beam_search::gen_param(1e2, 10);
+    auto param = beam_search::gen_param(1e4, 120);
     auto result = beam_search::search(param, true);
     cerr << "resulit.size()=" << result.size() << endl;
     vector<vector<S>> ans;
