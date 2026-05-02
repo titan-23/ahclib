@@ -59,6 +59,7 @@ class Optimizer:
                         f"pruned ! | {str(pruned_cnt).zfill(len(str(int(len(scores)))))} / {len(scores)}"
                     )
                 )
+                raise optuna.TrialPruned()
             score = tester.get_score(scores)
             return score
 
@@ -66,7 +67,9 @@ class Optimizer:
         _objective_func: Callable[[optuna.trial.Trial], float] = _objective
 
         if sampler == "auto_sampler":
-            optuna_sampler = optunahub.load_module("samplers/auto_sampler").AutoSampler()
+            optuna_sampler = optunahub.load_module(
+                "samplers/auto_sampler"
+            ).AutoSampler()
         else:
             sampler = "TPESampler"
             optuna_sampler = optuna.samplers.TPESampler(multivariate=True)
@@ -91,7 +94,7 @@ class Optimizer:
             logger.info(f"------------------------------------------")
             process = subprocess.Popen(
                 ["optuna-dashboard", storage],
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,
@@ -128,7 +131,7 @@ class Optimizer:
             logger.error(e)
             exit(1)
         finally:
-            if 'process' in locals():
+            if "process" in locals():
                 process.terminate()
                 process.wait()
 
@@ -151,10 +154,17 @@ class Optimizer:
                 pass
 
         save_plot(optuna.visualization.plot_contour(study), "contour")
-        save_plot(optuna.visualization.plot_param_importances(study), "param_importances")
+        save_plot(
+            optuna.visualization.plot_param_importances(study), "param_importances"
+        )
         save_plot(optuna.visualization.plot_edf(study), "edf")
-        save_plot(optuna.visualization.plot_optimization_history(study), "optimization_history")
-        save_plot(optuna.visualization.plot_parallel_coordinate(study), "parallel_coordinate")
+        save_plot(
+            optuna.visualization.plot_optimization_history(study),
+            "optimization_history",
+        )
+        save_plot(
+            optuna.visualization.plot_parallel_coordinate(study), "parallel_coordinate"
+        )
         save_plot(optuna.visualization.plot_slice(study), "slice")
 
 
