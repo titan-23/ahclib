@@ -5,22 +5,18 @@ from ahclib.ahc_util import avg_score, geo_score
 """example
 python3 -m ahclib test -v -c -r
 python3 -m opt -w
-
-g++ ./main.cpp -O2 -std=c++20 -o a.out -I./../../../Library_cpp -march=native
 """
 
 
 class AHCSettings:
 
     # parallel_tester -------------------- #
-    direction = "minimize"  # minimize / maximize
+    direction = "maximize"  # minimize / maximize
     njobs = 100
     timeout = None
 
     filename = "./main.cpp"
-    compile_command = (
-        f"g++ {filename} -O2 -std=c++20 -o a.out -I./../../../Library_cpp -march=native"
-    )
+    compile_command = f"g++ {filename} -O2 -DLOCAL -std=c++20 -o a.out -fopenmp -I. -I./../../Library_cpp -march=native"
     execute_command = "./a.out"
     input_file_names = [f"./in/{str(i).zfill(4)}.txt" for i in range(100)]
 
@@ -39,15 +35,15 @@ class AHCSettings:
     study_name = "test"
 
     # optuna の試行回数
-    n_trials = 100
+    n_trials = 50
 
-    # optuna の cpu_count / 1推奨!
+    # optuna の cpu_count / 1 推奨!
     njobs_optuna = 1
 
     def objective(trial: optuna.trial.Trial) -> tuple:
         # 返り値のタプルはコマンドライン引数として渡す順番にする
-        start_temp = trial.suggest_float("start_temp", 1, 100, log=True)
-        k = trial.suggest_float("k", 0.0001, 1, log=True)
+        start_temp = trial.suggest_float("start_temp", 1e0, 1e5, log=True)
+        k = trial.suggest_float("k", 1e-6, 1, log=True)
         end_temp = start_temp * k
         return (start_temp, end_temp)
 
