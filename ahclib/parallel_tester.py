@@ -28,6 +28,7 @@ worker_valid_cnt = None
 worker_rel_log_sum = None
 worker_rel_cnt = None
 
+
 def init_worker(lock, counter, score_sum, valid_cnt, rel_log_sum, rel_cnt):
     """各ワーカープロセスの初期化時に呼ばれ、LockとCounterをセットします。"""
     global worker_lock, worker_counter, worker_score_sum, worker_valid_cnt, worker_rel_log_sum, worker_rel_cnt
@@ -104,8 +105,18 @@ def worker_process_file_light(args) -> float:
 
 def worker_process_file(args) -> tuple[str, float, float, str, str]:
     """入力`input_file`を処理し、ログやファイル出力も行います。"""
-    (input_file, cmd, timeout, use_relative_score, pre_data,
-     verbose, direction, output_dir, record, total_files) = args
+    (
+        input_file,
+        cmd,
+        timeout,
+        use_relative_score,
+        pre_data,
+        verbose,
+        direction,
+        output_dir,
+        record,
+        total_files,
+    ) = args
 
     global worker_lock, worker_counter
 
@@ -130,12 +141,10 @@ def worker_process_file(args) -> tuple[str, float, float, str, str]:
         end_time = time.perf_counter()
         score_line = result.stderr.rstrip().split("\n")[-1]
         _, score = score_line.split(" = ")
-        score = float(score) if '.' in score else int(score)
+        score = float(score) if "." in score else int(score)
 
         relative_score = (
-            -1
-            if input_file not in pre_data
-            else score / pre_data[input_file]
+            -1 if input_file not in pre_data else score / pre_data[input_file]
         )
 
         if verbose:
@@ -146,7 +155,9 @@ def worker_process_file(args) -> tuple[str, float, float, str, str]:
                     worker_score_sum.value += score
                     worker_valid_cnt.value += 1
                 now_valid_cnt = worker_valid_cnt.value
-                now_ave_score = worker_score_sum.value / now_valid_cnt if now_valid_cnt > 0 else 0.0
+                now_ave_score = (
+                    worker_score_sum.value / now_valid_cnt if now_valid_cnt > 0 else 0.0
+                )
                 now_ave_rel_str = ""
                 if use_relative_score:
                     if not math.isnan(relative_score) and relative_score != -1:
@@ -155,20 +166,40 @@ def worker_process_file(args) -> tuple[str, float, float, str, str]:
                     now_rel_cnt = worker_rel_cnt.value
                     if now_rel_cnt > 0:
                         ave_rel = math.exp(worker_rel_log_sum.value / now_rel_cnt)
-                        is_good_ave = (ave_rel < 1.0) if direction == "minimize" else (ave_rel > 1.0)
-                        now_ave_rel_str = to_green(f"{ave_rel:.4f}") if is_good_ave else to_red(f"{ave_rel:.4f}")
+                        is_good_ave = (
+                            (ave_rel < 1.0)
+                            if direction == "minimize"
+                            else (ave_rel > 1.0)
+                        )
+                        now_ave_rel_str = (
+                            to_green(f"{ave_rel:.4f}")
+                            if is_good_ave
+                            else to_red(f"{ave_rel:.4f}")
+                        )
                     else:
                         now_ave_rel_str = to_red("nan")
             cnt_keta = len(str(total_files))
             cnt_str = f"{cnt:>{cnt_keta}}"
-            s = f"{score:>{KETA_SCORE}.3f}" if isinstance(score, float) else f"{score:>{KETA_SCORE}}"
+            s = (
+                f"{score:>{KETA_SCORE}.3f}"
+                if isinstance(score, float)
+                else f"{score:>{KETA_SCORE}}"
+            )
             t_str = f"{(end_time - start_time):.3f} sec"
             t = f"{t_str:>{KETA_TIME}}"
             ave_s = f"{now_ave_score:>{KETA_SCORE}.3f}"
             log_parts = [f"{cnt_str} / {total_files}", input_file, s, t]
             if use_relative_score:
-                is_good = (relative_score < 1.0) if direction == "minimize" else (relative_score > 1.0)
-                u = to_green(f"{relative_score:.3f}") if is_good else to_red(f"{relative_score:.3f}")
+                is_good = (
+                    (relative_score < 1.0)
+                    if direction == "minimize"
+                    else (relative_score > 1.0)
+                )
+                u = (
+                    to_green(f"{relative_score:.3f}")
+                    if is_good
+                    else to_red(f"{relative_score:.3f}")
+                )
                 log_parts.extend([u, f"Ave: {ave_s}", f"RelAve: {now_ave_rel_str}"])
             else:
                 log_parts.append(f"Ave: {ave_s}")
@@ -204,10 +235,18 @@ def worker_process_file(args) -> tuple[str, float, float, str, str]:
 
         if record:
             with open(f"{output_dir}/err/{filename}", "w", encoding="utf-8") as out_f:
-                stderr_val = e.stderr if isinstance(e.stderr, str) else (e.stderr.decode("utf-8", errors="ignore") if e.stderr else "")
+                stderr_val = (
+                    e.stderr
+                    if isinstance(e.stderr, str)
+                    else (e.stderr.decode("utf-8", errors="ignore") if e.stderr else "")
+                )
                 out_f.write(stderr_val)
             with open(f"{output_dir}/out/{filename}", "w", encoding="utf-8") as out_f:
-                stdout_val = e.stdout if isinstance(e.stdout, str) else (e.stdout.decode("utf-8", errors="ignore") if e.stdout else "")
+                stdout_val = (
+                    e.stdout
+                    if isinstance(e.stdout, str)
+                    else (e.stdout.decode("utf-8", errors="ignore") if e.stdout else "")
+                )
                 out_f.write(stdout_val)
 
         return input_file, math.nan, math.nan, "TLE", f"{timeout:.3f}"
@@ -374,7 +413,9 @@ class ParallelTester:
         except Exception as e:
             logger.warning(f"Failed to copy source file {self.filename}: {e}")
         try:
-            shutil.copy2("ahc_settings.py", os.path.join(self.output_dir, "ahc_settings.py"))
+            shutil.copy2(
+                "ahc_settings.py", os.path.join(self.output_dir, "ahc_settings.py")
+            )
         except Exception as e:
             logger.warning(f"Failed to copy ahc_settings.py: {e}")
 
@@ -387,8 +428,18 @@ class ParallelTester:
         cmd = self.execute_command + self.added_command
         total_files = len(self.input_file_names)
         args_list = [
-            (file, cmd, self.timeout, self.use_relative_score, self.pre_data,
-             self.verbose, self.direction, self.output_dir, record, total_files)
+            (
+                file,
+                cmd,
+                self.timeout,
+                self.use_relative_score,
+                self.pre_data,
+                self.verbose,
+                self.direction,
+                self.output_dir,
+                record,
+                total_files,
+            )
             for file in self.input_file_names
         ]
 
@@ -403,7 +454,7 @@ class ParallelTester:
             with multiprocessing.Pool(
                 processes=self.cpu_count,
                 initializer=init_worker,
-                initargs=(lock, counter, score_sum, valid_cnt, rel_log_sum, rel_cnt)
+                initargs=(lock, counter, score_sum, valid_cnt, rel_log_sum, rel_cnt),
             ) as pool:
                 result = pool.map(
                     worker_process_file,
@@ -490,6 +541,7 @@ def build_tester(
         pre_dir_name=settings.pre_dir_name,
     )
     return tester
+
 
 def run_test(
     settings: AHCSettings,

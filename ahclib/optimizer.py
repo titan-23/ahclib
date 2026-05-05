@@ -63,7 +63,10 @@ class Optimizer:
             score = tester.get_score(scores)
             return score
 
-        storage = f"sqlite:///{self.path}/data.db"
+        db_path = os.path.join(self.path, "optuna-journal.log")
+        storage = optuna.storages.JournalStorage(
+            optuna.storages.JournalFileBackend(db_path)
+        )
         _objective_func: Callable[[optuna.trial.Trial], float] = _objective
 
         if sampler == "auto_sampler":
@@ -72,7 +75,10 @@ class Optimizer:
             ).AutoSampler()
         else:
             sampler = "TPESampler"
-            optuna_sampler = optuna.samplers.TPESampler(multivariate=True)
+            optuna_sampler = optuna.samplers.TPESampler(
+                multivariate=True,
+                n_startup_trials=self.settings.optuna_n_startup_trials,
+            )
         logger.info(f"- sampler       : {to_bold(sampler)}")
 
         optuna_pruner = None
@@ -90,10 +96,13 @@ class Optimizer:
             pruner=optuna_pruner,
         )
 
+        for params in self.settings.optuna_init_trials:
+            study.enqueue_trial(params)
+
         try:
             logger.info(f"------------------------------------------")
             process = subprocess.Popen(
-                ["optuna-dashboard", storage],
+                ["optuna-dashboard", db_path],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 text=True,

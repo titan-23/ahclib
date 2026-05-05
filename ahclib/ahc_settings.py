@@ -1,6 +1,7 @@
 import optuna
+import sys
 from typing import Optional, Callable
-from ahclib.ahc_util import avg_score, geo_score
+from ahclib.ahc_util import avg_score, geo_score, to_red
 
 """example
 python3 -m ahclib test -v -c -r
@@ -23,6 +24,7 @@ class AHCSettings:
     use_relative_score = False
     pre_dir_name = ""
 
+    @staticmethod
     def get_score(scores: list[Optional[float]]) -> float:
         # assert None not in scores
         # return avg_score(scores)
@@ -40,12 +42,20 @@ class AHCSettings:
     # optuna の cpu_count / 1 推奨!
     njobs_optuna = 1
 
+    @staticmethod
     def objective(trial: optuna.trial.Trial) -> tuple:
         # 返り値のタプルはコマンドライン引数として渡す順番にする
         start_temp = trial.suggest_float("start_temp", 1e0, 1e5, log=True)
         k = trial.suggest_float("k", 1e-6, 1, log=True)
-        end_temp = start_temp * k
-        return (start_temp, end_temp)
+        return (start_temp, k)
+
+    # 探索の起点として最初に評価するパラメータ値のリストを指定する
+    optuna_init_trials = [
+        # {"start_temp": 1000.0, "k": 0.01},
+    ]
+
+    # (TPE)ランダムに探索する試行回数を指定する
+    optuna_n_startup_trials = 10  # デフォルト
 
     # visualize -------------------------- #
 
@@ -57,9 +67,10 @@ class AHCSettings:
                 lines = f.readlines()
             res = {}
             # TODO
-            res["N"], res["M"] = map(int, lines[0].split())
+            # res["N"], res["M"] = map(int, lines[0].split())
             return res
         except Exception:
+            print(to_red("[Error] : failed in parse_input_params"), file=sys.stderr)
             return {}
 
     # vis_beam ---------------------------------- #
