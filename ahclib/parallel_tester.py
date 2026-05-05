@@ -1,4 +1,3 @@
-import multiprocessing.managers
 from typing import Iterable, Callable, Optional
 import argparse
 from logging import getLogger, basicConfig
@@ -9,13 +8,12 @@ import math
 import os
 from random import Random
 import shutil
-import sys
 import csv
 import optuna
 import datetime
 import pandas as pd
 from .ahc_settings import AHCSettings
-from .ahc_util import to_green, to_red
+from .ahc_util import to_green, to_red, to_bold, to_blue
 
 logger = getLogger(__name__)
 
@@ -25,12 +23,20 @@ KETA_REL_SCORE = 10
 
 worker_lock = None
 worker_counter = None
+worker_score_sum = None
+worker_valid_cnt = None
+worker_rel_log_sum = None
+worker_rel_cnt = None
 
-def init_worker(lock, counter):
+def init_worker(lock, counter, score_sum, valid_cnt, rel_log_sum, rel_cnt):
     """各ワーカープロセスの初期化時に呼ばれ、LockとCounterをセットします。"""
-    global worker_lock, worker_counter
+    global worker_lock, worker_counter, worker_score_sum, worker_valid_cnt, worker_rel_log_sum, worker_rel_cnt
     worker_lock = lock
     worker_counter = counter
+    worker_score_sum = score_sum
+    worker_valid_cnt = valid_cnt
+    worker_rel_log_sum = rel_log_sum
+    worker_rel_cnt = rel_cnt
 
 
 def worker_process_file_opt_wilcoxon(args) -> tuple[int, float]:
@@ -40,8 +46,7 @@ def worker_process_file_opt_wilcoxon(args) -> tuple[int, float]:
     try:
         result = subprocess.run(
             cmd,
-            stderr=subprocess.PIPE,
-            stdout=subprocess.PIPE,
+            capture_output=True,
             input=input_text,
             timeout=timeout,
             text=True,
@@ -75,8 +80,7 @@ def worker_process_file_light(args) -> float:
             cmd,
             input=input_text,
             timeout=timeout,
-            stderr=subprocess.PIPE,
-            stdout=subprocess.PIPE,
+            capture_output=True,
             text=True,
             check=True,
         )
@@ -119,15 +123,14 @@ def worker_process_file(args) -> tuple[str, float, float, str, str]:
             cmd,
             input=input_text,
             timeout=timeout,
-            stderr=subprocess.PIPE,
-            stdout=subprocess.PIPE,
+            capture_output=True,
             text=True,
             check=True,
         )
         end_time = time.perf_counter()
         score_line = result.stderr.rstrip().split("\n")[-1]
         _, score = score_line.split(" = ")
-        score = float(score)
+        score = float(score) if '.' in score else int(score)
 
         relative_score = (
             -1
@@ -139,41 +142,44 @@ def worker_process_file(args) -> tuple[str, float, float, str, str]:
             with worker_lock:
                 worker_counter.value += 1
                 cnt = worker_counter.value
-
-            cnt_str = " " * (len(str(total_files)) - len(str(cnt))) + str(cnt)
-            s = str(f"{score:.3f}")
-            s = " " * (KETA_SCORE - len(s)) + s
-            t = f"{(end_time-start_time):.3f} sec"
-            t = " " * (KETA_TIME - len(t)) + t
-
-            u = ""
-            if direction == "minimize":
-                u = (
-                    to_green(f"{(relative_score):.3f}")
-                    if relative_score < 1.0
-                    else to_red(f"{(relative_score):.3f}")
-                )
-            else:
-                u = (
-                    to_green(f"{(relative_score):.3f}")
-                    if relative_score > 1.0
-                    else to_red(f"{(relative_score):.3f}")
-                )
-
+                if not math.isnan(score):
+                    worker_score_sum.value += score
+                    worker_valid_cnt.value += 1
+                now_valid_cnt = worker_valid_cnt.value
+                now_ave_score = worker_score_sum.value / now_valid_cnt if now_valid_cnt > 0 else 0.0
+                now_ave_rel_str = ""
+                if use_relative_score:
+                    if not math.isnan(relative_score) and relative_score != -1:
+                        worker_rel_log_sum.value += math.log(relative_score)
+                        worker_rel_cnt.value += 1
+                    now_rel_cnt = worker_rel_cnt.value
+                    if now_rel_cnt > 0:
+                        ave_rel = math.exp(worker_rel_log_sum.value / now_rel_cnt)
+                        is_good_ave = (ave_rel < 1.0) if direction == "minimize" else (ave_rel > 1.0)
+                        now_ave_rel_str = to_green(f"{ave_rel:.4f}") if is_good_ave else to_red(f"{ave_rel:.4f}")
+                    else:
+                        now_ave_rel_str = to_red("nan")
+            cnt_keta = len(str(total_files))
+            cnt_str = f"{cnt:>{cnt_keta}}"
+            s = f"{score:>{KETA_SCORE}.3f}" if isinstance(score, float) else f"{score:>{KETA_SCORE}}"
+            t_str = f"{(end_time - start_time):.3f} sec"
+            t = f"{t_str:>{KETA_TIME}}"
+            ave_s = f"{now_ave_score:>{KETA_SCORE}.3f}"
+            log_parts = [f"{cnt_str} / {total_files}", input_file, s, t]
             if use_relative_score:
-                logger.info(
-                    f"| {cnt_str} / {total_files} | {input_file} | {s} | {t} | {u} |"
-                )
+                is_good = (relative_score < 1.0) if direction == "minimize" else (relative_score > 1.0)
+                u = to_green(f"{relative_score:.3f}") if is_good else to_red(f"{relative_score:.3f}")
+                log_parts.extend([u, f"Ave: {ave_s}", f"RelAve: {now_ave_rel_str}"])
             else:
-                logger.info(
-                    f"| {cnt_str} / {total_files} | {input_file} | {s} | {t} |"
-                )
-
-        if record:
-            with open(f"{output_dir}/err/{filename}", "w", encoding="utf-8") as out_f:
-                out_f.write(result.stderr)
-            with open(f"{output_dir}/out/{filename}", "w", encoding="utf-8") as out_f:
-                out_f.write(result.stdout)
+                log_parts.append(f"Ave: {ave_s}")
+            logger.info(f"| {' | '.join(log_parts)} |")
+            if record:
+                err_path = os.path.join(output_dir, "err", filename)
+                with open(err_path, "w", encoding="utf-8") as out_f:
+                    out_f.write(result.stderr)
+                out_path = os.path.join(output_dir, "out", filename)
+                with open(out_path, "w", encoding="utf-8") as out_f:
+                    out_f.write(result.stdout)
 
         return (
             input_file,
@@ -280,8 +286,7 @@ class ParallelTester:
         self.pre_data = {}
         if os.path.exists(pre_dir_name):
             df = pd.read_csv(pre_dir_name)
-            for _, row in df.iterrows():
-                self.pre_data[row["filename"]] = row["score"]
+            self.pre_data = dict(zip(df["filename"], df["score"]))
 
         self.rnd = Random(None)
 
@@ -306,11 +311,9 @@ class ParallelTester:
         """``compile_command`` よりコンパイルします。"""
         if self.compile_command is None:
             return
-        logger.info("Compiling ...")
         subprocess.run(
             self.compile_command,
-            stderr=subprocess.PIPE,
-            stdout=subprocess.PIPE,
+            capture_output=True,
             text=True,
             check=True,
         )
@@ -392,11 +395,15 @@ class ParallelTester:
         with multiprocessing.Manager() as manager:
             lock = manager.Lock()
             counter = manager.Value("i", 0)
+            score_sum = manager.Value("d", 0.0)
+            valid_cnt = manager.Value("i", 0)
+            rel_log_sum = manager.Value("d", 0.0)
+            rel_cnt = manager.Value("i", 0)
 
             with multiprocessing.Pool(
                 processes=self.cpu_count,
                 initializer=init_worker,
-                initargs=(lock, counter)
+                initargs=(lock, counter, score_sum, valid_cnt, rel_log_sum, rel_cnt)
             ) as pool:
                 result = pool.map(
                     worker_process_file,
@@ -499,13 +506,26 @@ def run_test(
 
     njobs = max(1, min(njobs, multiprocessing.cpu_count() - 1))
 
+    if verbose:
+        logger.info(f"--- {to_bold('[Settings]')} ---")
+        logger.info(f"direction       : {settings.direction}")
+        logger.info(f"timeout         : {settings.timeout}")
+        logger.info(f"filename        : {to_bold(to_blue((settings.filename)))}")
+        if settings.use_relative_score:
+            logger.info(f"pre_dir_name    : {settings.pre_dir_name}")
+        logger.info(f"execute_command : {settings.execute_command}")
+        logger.info(f"njobs           : {njobs}")
+        logger.info("----------------")
+
     tester = build_tester(settings, njobs, verbose)
-    logger.info(f"{njobs=}")
 
     if compile:
+        if verbose:
+            logger.info(f"Compiling...    : {settings.compile_command}")
         tester.compile()
 
-    logger.info("Start.")
+    if verbose:
+        logger.info("Start.")
 
     start = time.time()
 
