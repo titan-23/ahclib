@@ -3,16 +3,19 @@ import os
 import sys
 from datetime import datetime
 
+
 def _run_test_process():
     try:
         if os.getcwd() not in sys.path:
             sys.path.append(os.getcwd())
         from ahc_settings import AHCSettings
         from ahclib.parallel_tester import run_test
+
         njobs = min(AHCSettings.njobs, multiprocessing.cpu_count() - 1)
         run_test(AHCSettings, njobs, verbose=False, compile=True, record=True)
     except Exception as e:
         print(f"Error in test process: {e}")
+
 
 def _run_opt_process():
     try:
@@ -20,12 +23,15 @@ def _run_opt_process():
             sys.path.append(os.getcwd())
         from ahc_settings import AHCSettings
         from ahclib.optimizer import run_optimizer
+
         run_optimizer(AHCSettings, sampler=None, pruner="WilcoxonPruner")
     except Exception as e:
         print(f"Error in opt process: {e}")
 
+
 class TaskManager:
-    """ GUIからのタスク実行をキューで管理するクラス """
+    """GUIからのタスク実行をキューで管理するクラス"""
+
     def __init__(self):
         self.process = None
         self.current_task = None
@@ -47,11 +53,15 @@ class TaskManager:
             else:
                 self.process = None
                 self.current_task = None
-        
+
         # キューにタスクがあれば実行
         if self.queue and self.process is None:
             self.current_task = self.queue.pop(0)
-            target = _run_test_process if self.current_task["type"] == "test" else _run_opt_process
+            target = (
+                _run_test_process
+                if self.current_task["type"] == "test"
+                else _run_opt_process
+            )
             self.process = multiprocessing.Process(target=target)
             self.process.start()
 
@@ -69,11 +79,9 @@ class TaskManager:
         self.queue.clear()
 
     def get_queue_status(self):
-        self._check_queue() # 状態を最新化
-        return {
-            "current": self.current_task,
-            "queue": self.queue
-        }
+        self._check_queue()  # 状態を最新化
+        return {"current": self.current_task, "queue": self.queue}
+
 
 # シングルトンとしてエクスポート
 task_manager = TaskManager()

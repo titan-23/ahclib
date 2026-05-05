@@ -20,17 +20,20 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ASSETS_PATH = os.path.join(CURRENT_DIR, "assets/")
 VIS_HTML_PATH = os.path.join(os.getcwd(), "visualizer.html")
 
+
 def get_ahc_setting(key, default):
     try:
         if os.getcwd() not in sys.path:
             sys.path.append(os.getcwd())
         import ahc_settings
+
         importlib.reload(ahc_settings)
         return getattr(ahc_settings.AHCSettings, key, default)
     except Exception:
         return default
 
-DIRECTION = get_ahc_setting('direction', 'minimize')
+
+DIRECTION = get_ahc_setting("direction", "minimize")
 
 if not os.path.exists(ASSETS_PATH):
     os.makedirs(ASSETS_PATH, exist_ok=True)
@@ -102,24 +105,31 @@ input[type="radio"], input[type="checkbox"] { accent-color: #29b6f6; cursor: poi
 with open(os.path.join(ASSETS_PATH, "custom.css"), "w", encoding="utf-8") as f:
     f.write(css_content)
 
+
 def format_timestamp(ts):
     try:
         return datetime.strptime(ts, "%Y%m%d_%H%M").strftime("%Y/%m/%d %H:%M")
     except:
         return ts
 
+
 _CSV_CACHE = {}
+
 
 def load_data():
     global _CSV_CACHE
     data = []
-    empty_df = pd.DataFrame(columns=["filename", "score", "state", "time", "timestamp", "name", "test_id"])
+    empty_df = pd.DataFrame(
+        columns=["filename", "score", "state", "time", "timestamp", "name", "test_id"]
+    )
 
     if not os.path.exists(BASE_PATH):
         return empty_df
 
     current_folders = sorted(os.listdir(BASE_PATH))
-    _CSV_CACHE = {k: v for k, v in _CSV_CACHE.items() if os.path.basename(k) in current_folders}
+    _CSV_CACHE = {
+        k: v for k, v in _CSV_CACHE.items() if os.path.basename(k) in current_folders
+    }
 
     for folder in current_folders:
         folder_path = os.path.join(BASE_PATH, folder)
@@ -145,6 +155,7 @@ def load_data():
 
     return pd.concat(data, ignore_index=True)
 
+
 def load_single_err_out(timestamp, filename):
     err_path = os.path.join(BASE_PATH, timestamp, "err", filename)
     out_path = os.path.join(BASE_PATH, timestamp, "out", filename)
@@ -161,6 +172,7 @@ def load_single_err_out(timestamp, filename):
 
     return err_text, out_text
 
+
 def load_source_code(timestamp):
     """保存された ahc_settings.py と同ディレクトリのソースコードを取得する"""
     dir_path = os.path.join(BASE_PATH, timestamp)
@@ -175,13 +187,15 @@ def load_source_code(timestamp):
                 m = re.search(r'filename\s*=\s*["\'](.*?)["\']', content)
                 if m:
                     src_filename = os.path.basename(m.group(1))
-        except: pass
+        except:
+            pass
 
     # 2. 見つからない場合はディレクトリ内のソースっぽいファイルを探す
     if not src_filename and os.path.exists(dir_path):
         for f in os.listdir(dir_path):
-            if (f.endswith(".cpp") or f.endswith(".py") or f.endswith(".rs")) \
-               and f not in ["ahc_settings.py", "result.csv"]:
+            if (
+                f.endswith(".cpp") or f.endswith(".py") or f.endswith(".rs")
+            ) and f not in ["ahc_settings.py", "result.csv"]:
                 src_filename = f
                 break
 
@@ -201,6 +215,7 @@ def load_source_code(timestamp):
 
     return "(ソースコードが保存されていません)", src_filename
 
+
 def load_in_file_content(filename):
     in_path = os.path.join("./in", filename)
     if os.path.exists(in_path):
@@ -211,9 +226,11 @@ def load_in_file_content(filename):
             return ""
     return ""
 
+
 _CACHE_META_DATA = None
 _CACHE_IN_FILES = []
 _CACHE_SETTINGS_MTIME = 0
+
 
 def load_meta_data():
     global _CACHE_META_DATA, _CACHE_IN_FILES, _CACHE_SETTINGS_MTIME
@@ -223,9 +240,15 @@ def load_meta_data():
 
     current_files = sorted([f for f in os.listdir(in_dir) if f.endswith(".txt")])
     settings_path = os.path.join(os.getcwd(), "ahc_settings.py")
-    current_settings_mtime = os.path.getmtime(settings_path) if os.path.exists(settings_path) else 0
+    current_settings_mtime = (
+        os.path.getmtime(settings_path) if os.path.exists(settings_path) else 0
+    )
 
-    if _CACHE_META_DATA is not None and _CACHE_IN_FILES == current_files and _CACHE_SETTINGS_MTIME == current_settings_mtime:
+    if (
+        _CACHE_META_DATA is not None
+        and _CACHE_IN_FILES == current_files
+        and _CACHE_SETTINGS_MTIME == current_settings_mtime
+    ):
         return _CACHE_META_DATA.copy()
 
     meta = []
@@ -234,8 +257,9 @@ def load_meta_data():
         if os.getcwd() not in sys.path:
             sys.path.append(os.getcwd())
         import ahc_settings
+
         importlib.reload(ahc_settings)
-        if hasattr(ahc_settings.AHCSettings, 'parse_input_params'):
+        if hasattr(ahc_settings.AHCSettings, "parse_input_params"):
             custom_parser = ahc_settings.AHCSettings.parse_input_params
     except Exception:
         pass
@@ -253,7 +277,7 @@ def load_meta_data():
         try:
             with open(path, "r", encoding="utf-8") as f:
                 line = f.readline().strip()
-                nums = [int(x) for x in line.split() if x.lstrip('-').isdigit()]
+                nums = [int(x) for x in line.split() if x.lstrip("-").isdigit()]
                 param = float(nums[0]) if nums else float(os.path.getsize(path))
             meta.append({"test_id": fname, "Param": param})
         except Exception:
@@ -272,169 +296,624 @@ def load_meta_data():
 
 app = Dash(__name__, assets_folder=ASSETS_PATH)
 
-app.layout = html.Div(className="layout-container", children=[
-    dcc.Store(id="base-store"),
-    dcc.Store(id="table-data", data=[]),
-    dcc.Store(id="prev-selected-rows", data=[]),
-    dcc.Store(id="target-ts-store", data=None),
-    html.Div(id="dummy-output", style={"display": "none"}),
-
-    dcc.Interval(id="task-interval", interval=10000, n_intervals=0),
-    dcc.Store(id="task-was-running", data=False),
-
-    # === 左側：サイドバー ===
-    html.Div(id="sidebar-container", className="sidebar-base sidebar-pinned", children=[
-        html.Div(className="sidebar-content", children=[
-            html.Div(style={"display": "flex", "alignItems": "center", "marginBottom": "15px", "justifyContent": "space-between"}, children=[
-                html.H2("AHC Dashboard", style={"margin": "0", "fontSize": "20px"}),
-                html.Button("◀", id="pin-btn", className="btn-pin", title="サイドバーの固定を解除する")
-            ]),
-
-            html.Div(className="card", style={"padding": "15px", "marginBottom": "20px", "backgroundColor": "#252525", "boxShadow": "inset 0 2px 4px rgba(0,0,0,0.5)"}, children=[
-                html.Div(style={"display": "flex", "justifyContent": "space-between", "alignItems": "center", "marginBottom": "12px"}, children=[
-                    html.H3("Runner Queue", style={"margin": "0", "fontSize": "14px", "color": "#ccc"}),
-                ]),
-                html.Div(style={"display": "flex", "gap": "6px", "marginBottom": "10px"}, children=[
-                    html.Button("▶ Test", id="btn-run-test", className="btn", style={"flex": "1", "backgroundColor": "#2e7d32", "borderColor": "#1b5e20", "color": "white"}),
-                    html.Button("▶ Opt", id="btn-run-opt", className="btn", style={"flex": "1", "backgroundColor": "#1565c0", "borderColor": "#0d47a1", "color": "white"}),
-                    html.Button("⏹ Stop", id="btn-stop-task", className="btn", style={"flex": "1", "backgroundColor": "#c62828", "borderColor": "#b71c1c", "color": "white"}),
-                    html.Button("🗑️ Clear", id="btn-clear-queue", className="btn", style={"flex": "1", "backgroundColor": "#555", "borderColor": "#333", "color": "white"}),
-                ]),
-                html.Div(id="queue-display", style={"fontSize": "12px", "color": "#aaa", "whiteSpace": "pre-wrap", "fontFamily": "monospace", "lineHeight": "1.5"})
-            ]),
-
-            html.Div(style={"display": "flex", "flexWrap": "wrap", "gap": "8px", "marginBottom": "10px"}, children=[
-                html.Button("🔄 更新", id="reload-button", className="btn", n_clicks=0),
-                html.Button("🆕 直近を追加", id="add-latest", className="btn", n_clicks=0),
-                html.Button("✅ 全選択", id="select-all", className="btn", n_clicks=0),
-                html.Button("❌ 解除", id="clear-selection", className="btn", n_clicks=0),
-            ]),
-
-            html.Div(style={"flex": "1", "overflowY": "auto"}, children=[
-                dash_table.DataTable(
-                    id="timestamp-table",
-                    columns=[
-                        {"name": "Base", "id": "is_base_str"},
-                        {"name": "実行日時", "id": "formatted"},
-                        {"name": "Ave", "id": "average_score", "type": "numeric", "format": {"specifier": ".2f"}},
-                        {"name": "Rel", "id": "rel_ave", "type": "numeric", "format": {"specifier": ".3f"}},
-                        {"name": "Memo", "id": "memo", "editable": True},
-                        {"name": "", "id": "delete_btn"},
-                    ],
-                    style_table={"width": "100%"},
-                    style_cell={"textAlign": "left", "padding": "6px", "fontSize": "12px", "backgroundColor": "#1e1e1e", "color": "#e0e0e0", "border": "1px solid #444"},
-                    style_header={"fontWeight": "bold", "backgroundColor": "#2d2d2d", "color": "#e0e0e0", "border": "1px solid #444"},
-                    style_data_conditional=[
-                        {"if": {"state": "selected"}, "backgroundColor": "#3a3f47", "border": "1px solid #666"},
-                        {"if": {"state": "active"}, "backgroundColor": "#3a3f47", "border": "1px solid #666"},
-
-                        {"if": {"column_id": "is_base_str"}, "cursor": "pointer", "textAlign": "center", "width": "40px", "fontSize": "14px"},
-                        {"if": {"column_id": "is_base_str", "filter_query": "{is_base_str} = '★'"}, "color": "#ffca28"},
-                        {"if": {"column_id": "is_base_str", "filter_query": "{is_base_str} = '・'"}, "color": "#666666"},
-                        {"if": {"column_id": "delete_btn"}, "cursor": "pointer", "textAlign": "center", "width": "30px", "fontSize": "14px", "color": "#e57373"},
-                        {"if": {"column_id": "memo"}, "maxWidth": "80px", "textOverflow": "ellipsis", "overflow": "hidden", "whiteSpace": "nowrap", "backgroundColor": "#2a2a2a"},
-
-                        {
-                            "if": {
-                                "column_id": "rel_ave",
-                                "filter_query": "{rel_ave} < 1.0" if DIRECTION == "minimize" else "{rel_ave} > 1.0"
+app.layout = html.Div(
+    className="layout-container",
+    children=[
+        dcc.Store(id="base-store"),
+        dcc.Store(id="table-data", data=[]),
+        dcc.Store(id="prev-selected-rows", data=[]),
+        dcc.Store(id="target-ts-store", data=None),
+        html.Div(id="dummy-output", style={"display": "none"}),
+        dcc.Interval(id="task-interval", interval=10000, n_intervals=0),
+        dcc.Store(id="task-was-running", data=False),
+        # === 左側：サイドバー ===
+        html.Div(
+            id="sidebar-container",
+            className="sidebar-base sidebar-pinned",
+            children=[
+                html.Div(
+                    className="sidebar-content",
+                    children=[
+                        html.Div(
+                            style={
+                                "display": "flex",
+                                "alignItems": "center",
+                                "marginBottom": "15px",
+                                "justifyContent": "space-between",
                             },
-                            "backgroundColor": "rgba(46, 125, 50, 0.3)", "color": "#81c784"
-                        },
-                        {
-                            "if": {
-                                "column_id": "rel_ave",
-                                "filter_query": "{rel_ave} > 1.0" if DIRECTION == "minimize" else "{rel_ave} < 1.0"
+                            children=[
+                                html.H2(
+                                    "AHC Dashboard",
+                                    style={"margin": "0", "fontSize": "20px"},
+                                ),
+                                html.Button(
+                                    "◀",
+                                    id="pin-btn",
+                                    className="btn-pin",
+                                    title="サイドバーの固定を解除する",
+                                ),
+                            ],
+                        ),
+                        html.Div(
+                            className="card",
+                            style={
+                                "padding": "15px",
+                                "marginBottom": "20px",
+                                "backgroundColor": "#252525",
+                                "boxShadow": "inset 0 2px 4px rgba(0,0,0,0.5)",
                             },
-                            "backgroundColor": "rgba(183, 28, 28, 0.3)", "color": "#e57373"
-                        },
+                            children=[
+                                html.Div(
+                                    style={
+                                        "display": "flex",
+                                        "justifyContent": "space-between",
+                                        "alignItems": "center",
+                                        "marginBottom": "12px",
+                                    },
+                                    children=[
+                                        html.H3(
+                                            "Runner Queue",
+                                            style={
+                                                "margin": "0",
+                                                "fontSize": "14px",
+                                                "color": "#ccc",
+                                            },
+                                        ),
+                                    ],
+                                ),
+                                html.Div(
+                                    style={
+                                        "display": "flex",
+                                        "gap": "6px",
+                                        "marginBottom": "10px",
+                                    },
+                                    children=[
+                                        html.Button(
+                                            "▶ Test",
+                                            id="btn-run-test",
+                                            className="btn",
+                                            style={
+                                                "flex": "1",
+                                                "backgroundColor": "#2e7d32",
+                                                "borderColor": "#1b5e20",
+                                                "color": "white",
+                                            },
+                                        ),
+                                        html.Button(
+                                            "▶ Opt",
+                                            id="btn-run-opt",
+                                            className="btn",
+                                            style={
+                                                "flex": "1",
+                                                "backgroundColor": "#1565c0",
+                                                "borderColor": "#0d47a1",
+                                                "color": "white",
+                                            },
+                                        ),
+                                        html.Button(
+                                            "⏹ Stop",
+                                            id="btn-stop-task",
+                                            className="btn",
+                                            style={
+                                                "flex": "1",
+                                                "backgroundColor": "#c62828",
+                                                "borderColor": "#b71c1c",
+                                                "color": "white",
+                                            },
+                                        ),
+                                        html.Button(
+                                            "🗑️ Clear",
+                                            id="btn-clear-queue",
+                                            className="btn",
+                                            style={
+                                                "flex": "1",
+                                                "backgroundColor": "#555",
+                                                "borderColor": "#333",
+                                                "color": "white",
+                                            },
+                                        ),
+                                    ],
+                                ),
+                                html.Div(
+                                    id="queue-display",
+                                    style={
+                                        "fontSize": "12px",
+                                        "color": "#aaa",
+                                        "whiteSpace": "pre-wrap",
+                                        "fontFamily": "monospace",
+                                        "lineHeight": "1.5",
+                                    },
+                                ),
+                            ],
+                        ),
+                        html.Div(
+                            style={
+                                "display": "flex",
+                                "flexWrap": "wrap",
+                                "gap": "8px",
+                                "marginBottom": "10px",
+                            },
+                            children=[
+                                html.Button(
+                                    "🔄 更新",
+                                    id="reload-button",
+                                    className="btn",
+                                    n_clicks=0,
+                                ),
+                                html.Button(
+                                    "🆕 直近を追加",
+                                    id="add-latest",
+                                    className="btn",
+                                    n_clicks=0,
+                                ),
+                                html.Button(
+                                    "✅ 全選択",
+                                    id="select-all",
+                                    className="btn",
+                                    n_clicks=0,
+                                ),
+                                html.Button(
+                                    "❌ 解除",
+                                    id="clear-selection",
+                                    className="btn",
+                                    n_clicks=0,
+                                ),
+                            ],
+                        ),
+                        html.Div(
+                            style={"flex": "1", "overflowY": "auto"},
+                            children=[
+                                dash_table.DataTable(
+                                    id="timestamp-table",
+                                    columns=[
+                                        {"name": "Base", "id": "is_base_str"},
+                                        {"name": "実行日時", "id": "formatted"},
+                                        {
+                                            "name": "Ave",
+                                            "id": "average_score",
+                                            "type": "numeric",
+                                            "format": {"specifier": ".2f"},
+                                        },
+                                        {
+                                            "name": "Rel",
+                                            "id": "rel_ave",
+                                            "type": "numeric",
+                                            "format": {"specifier": ".3f"},
+                                        },
+                                        {
+                                            "name": "Memo",
+                                            "id": "memo",
+                                            "editable": True,
+                                        },
+                                        {"name": "", "id": "delete_btn"},
+                                    ],
+                                    style_table={"width": "100%"},
+                                    style_cell={
+                                        "textAlign": "left",
+                                        "padding": "6px",
+                                        "fontSize": "12px",
+                                        "backgroundColor": "#1e1e1e",
+                                        "color": "#e0e0e0",
+                                        "border": "1px solid #444",
+                                    },
+                                    style_header={
+                                        "fontWeight": "bold",
+                                        "backgroundColor": "#2d2d2d",
+                                        "color": "#e0e0e0",
+                                        "border": "1px solid #444",
+                                    },
+                                    style_data_conditional=[
+                                        {
+                                            "if": {"state": "selected"},
+                                            "backgroundColor": "#3a3f47",
+                                            "border": "1px solid #666",
+                                        },
+                                        {
+                                            "if": {"state": "active"},
+                                            "backgroundColor": "#3a3f47",
+                                            "border": "1px solid #666",
+                                        },
+                                        {
+                                            "if": {"column_id": "is_base_str"},
+                                            "cursor": "pointer",
+                                            "textAlign": "center",
+                                            "width": "40px",
+                                            "fontSize": "14px",
+                                        },
+                                        {
+                                            "if": {
+                                                "column_id": "is_base_str",
+                                                "filter_query": "{is_base_str} = '★'",
+                                            },
+                                            "color": "#ffca28",
+                                        },
+                                        {
+                                            "if": {
+                                                "column_id": "is_base_str",
+                                                "filter_query": "{is_base_str} = '・'",
+                                            },
+                                            "color": "#666666",
+                                        },
+                                        {
+                                            "if": {"column_id": "delete_btn"},
+                                            "cursor": "pointer",
+                                            "textAlign": "center",
+                                            "width": "30px",
+                                            "fontSize": "14px",
+                                            "color": "#e57373",
+                                        },
+                                        {
+                                            "if": {"column_id": "memo"},
+                                            "maxWidth": "80px",
+                                            "textOverflow": "ellipsis",
+                                            "overflow": "hidden",
+                                            "whiteSpace": "nowrap",
+                                            "backgroundColor": "#2a2a2a",
+                                        },
+                                        {
+                                            "if": {
+                                                "column_id": "rel_ave",
+                                                "filter_query": (
+                                                    "{rel_ave} < 1.0"
+                                                    if DIRECTION == "minimize"
+                                                    else "{rel_ave} > 1.0"
+                                                ),
+                                            },
+                                            "backgroundColor": "rgba(46, 125, 50, 0.3)",
+                                            "color": "#81c784",
+                                        },
+                                        {
+                                            "if": {
+                                                "column_id": "rel_ave",
+                                                "filter_query": (
+                                                    "{rel_ave} > 1.0"
+                                                    if DIRECTION == "minimize"
+                                                    else "{rel_ave} < 1.0"
+                                                ),
+                                            },
+                                            "backgroundColor": "rgba(183, 28, 28, 0.3)",
+                                            "color": "#e57373",
+                                        },
+                                    ],
+                                    row_selectable="multi",
+                                    selected_rows=[],
+                                )
+                            ],
+                        ),
+                        html.Div(
+                            "※ Memo列をクリックでメモを編集・自動保存できます",
+                            style={
+                                "fontSize": "11px",
+                                "color": "#888",
+                                "marginTop": "5px",
+                            },
+                        ),
                     ],
-                    row_selectable="multi",
-                    selected_rows=[],
                 )
-            ]),
-            html.Div("※ Memo列をクリックでメモを編集・自動保存できます", style={"fontSize": "11px", "color": "#888", "marginTop": "5px"})
-        ])
-    ]),
-
-    # === 右側：メインコンテンツ ===
-    html.Div(className="main-content", children=[
-
-        html.Div(className="card", children=[
-            html.Div(style={"display": "flex", "justifyContent": "space-between", "alignItems": "center", "marginBottom": "10px", "flexWrap": "wrap", "gap": "10px"}, children=[
-                html.Div(id="summary-text", style={"fontWeight": "bold", "color": "#ccc", "minWidth": "150px"}),
-
-                html.Div(style={"display": "flex", "alignItems": "center", "gap": "15px", "flexWrap": "wrap"}, children=[
-                    dcc.RadioItems(
-                        id="graph-type",
-                        options=[
-                            {"label": html.Span("絶対スコア", style={"paddingLeft": "4px"}), "value": "abs"},
-                            {"label": html.Span("相対スコア", style={"paddingLeft": "4px"}), "value": "rel"},
-                            {"label": html.Span("箱ひげ図", style={"paddingLeft": "4px"}), "value": "box"},
-                            {"label": html.Span("相関(散布図)", style={"paddingLeft": "4px"}), "value": "param_scatter"},
-                            {"label": html.Span("相関(Box)", style={"paddingLeft": "4px"}), "value": "param_box"},
-                            {"label": html.Span("相関(平均)", style={"paddingLeft": "4px"}), "value": "param_line"},
-                            {"label": html.Span("HM(絶対)", style={"paddingLeft": "4px"}), "value": "heatmap_abs"},
-                            {"label": html.Span("HM(相対)", style={"paddingLeft": "4px"}), "value": "heatmap_rel"},
-                        ],
-                        value="abs",
-                        inline=True,
-                        style={"display": "flex", "gap": "12px"},
-                        labelStyle={"cursor": "pointer", "color": "#e0e0e0", "display": "flex", "alignItems": "center", "fontSize": "13px"}
-                    ),
-                    html.Div(id="param-selector-container", style={"display": "none", "alignItems": "center", "gap": "5px"}, children=[
-                        html.Div(id="param-y-wrapper", style={"display": "none", "alignItems": "center", "gap": "5px"}, children=[
-                            dcc.Dropdown(id="param-selector-y", options=[], clearable=False, style={"width": "80px", "color": "#333"}, className="dash-dropdown"),
-                            html.Span("×", style={"color": "#aaa", "paddingBottom": "2px"})
-                        ]),
-                        dcc.Dropdown(id="param-selector", options=[], clearable=False, style={"width": "80px", "color": "#333"}, className="dash-dropdown")
-                    ]),
-                    dcc.Checklist(
-                        id="log-scale-check",
-                        options=[{"label": html.Span(" Y軸をLogスケール", style={"paddingLeft": "4px", "color": "#e0e0e0"}), "value": "log"}],
-                        value=[],
-                        labelStyle={"cursor": "pointer", "display": "flex", "alignItems": "center"},
-                        style={"fontSize": "13px"}
-                    )
-                ])
-            ]),
-            dcc.Graph(id="score-comparison-graph", style={"height": "350px"})
-        ]),
-
-        html.Div(className="card", style={"display": "flex", "gap": "20px", "flex": "1", "padding": "0", "overflow": "hidden", "minHeight": "400px"}, children=[
-
-            html.Div(style={"flex": "1", "minWidth": "250px", "display": "flex", "flexDirection": "column", "borderRight": "1px solid #333", "padding": "20px"}, children=[
-                html.Div(id="current-timestamp-display", style={"fontWeight": "bold", "marginBottom": "10px", "color": "#ccc", "flexShrink": "0"}),
-                html.Div(style={"flex": "1", "overflowY": "auto", "minHeight": "0"}, children=[
-                    dash_table.DataTable(
-                        id="file-name-table",
-                        columns=[
-                            {"name": "Case", "id": "name"},
-                            {"name": "Score", "id": "score", "type": "numeric"},
-                            {"name": "Time", "id": "time", "type": "numeric", "format": {"specifier": ".3f"}},
-                            {"name": "Best", "id": "best", "type": "numeric"},
-                            {"name": "Rel", "id": "rel", "type": "numeric", "format": {"specifier": ".3f"}},
-                        ],
-                        sort_action="native",
-                        style_cell={"textAlign": "left", "padding": "8px", "fontFamily": "monospace", "fontSize": "13px", "backgroundColor": "#1e1e1e", "color": "#e0e0e0", "border": "1px solid #444"},
-                        style_header={"fontWeight": "bold", "backgroundColor": "#2d2d2d", "color": "#e0e0e0", "border": "1px solid #444"},
-                        cell_selectable=True,
-                        style_as_list_view=True,
-                    )
-                ])
-            ]),
-
-            html.Div(style={"flex": "3", "display": "flex", "flexDirection": "column", "height": "100%", "minWidth": "0"}, children=[
-                dcc.Tabs(id="detail-tabs", value="tab-text", className="custom-tabs", children=[
-                    dcc.Tab(label="標準出力 (err/out)", value="tab-text", className="custom-tab", selected_className="custom-tab--selected"),
-                    dcc.Tab(label="Diff (ソースコード)", value="tab-diff", className="custom-tab", selected_className="custom-tab--selected"),
-                    dcc.Tab(label="ビジュアライザ", value="tab-vis", className="custom-tab", selected_className="custom-tab--selected"),
-                ]),
-                html.Div(id="tab-content", style={"flex": "1", "padding": "20px", "overflowY": "auto", "display": "flex", "flexDirection": "column", "minHeight": "0"})
-            ])
-        ])
-    ])
-])
+            ],
+        ),
+        # === 右側：メインコンテンツ ===
+        html.Div(
+            className="main-content",
+            children=[
+                html.Div(
+                    className="card",
+                    children=[
+                        html.Div(
+                            style={
+                                "display": "flex",
+                                "justifyContent": "space-between",
+                                "alignItems": "center",
+                                "marginBottom": "10px",
+                                "flexWrap": "wrap",
+                                "gap": "10px",
+                            },
+                            children=[
+                                html.Div(
+                                    id="summary-text",
+                                    style={
+                                        "fontWeight": "bold",
+                                        "color": "#ccc",
+                                        "minWidth": "150px",
+                                    },
+                                ),
+                                html.Div(
+                                    style={
+                                        "display": "flex",
+                                        "alignItems": "center",
+                                        "gap": "15px",
+                                        "flexWrap": "wrap",
+                                    },
+                                    children=[
+                                        dcc.RadioItems(
+                                            id="graph-type",
+                                            options=[
+                                                {
+                                                    "label": html.Span(
+                                                        "絶対スコア",
+                                                        style={"paddingLeft": "4px"},
+                                                    ),
+                                                    "value": "abs",
+                                                },
+                                                {
+                                                    "label": html.Span(
+                                                        "相対スコア",
+                                                        style={"paddingLeft": "4px"},
+                                                    ),
+                                                    "value": "rel",
+                                                },
+                                                {
+                                                    "label": html.Span(
+                                                        "箱ひげ図",
+                                                        style={"paddingLeft": "4px"},
+                                                    ),
+                                                    "value": "box",
+                                                },
+                                                {
+                                                    "label": html.Span(
+                                                        "相関(散布図)",
+                                                        style={"paddingLeft": "4px"},
+                                                    ),
+                                                    "value": "param_scatter",
+                                                },
+                                                {
+                                                    "label": html.Span(
+                                                        "相関(Box)",
+                                                        style={"paddingLeft": "4px"},
+                                                    ),
+                                                    "value": "param_box",
+                                                },
+                                                {
+                                                    "label": html.Span(
+                                                        "相関(平均)",
+                                                        style={"paddingLeft": "4px"},
+                                                    ),
+                                                    "value": "param_line",
+                                                },
+                                                {
+                                                    "label": html.Span(
+                                                        "HM(絶対)",
+                                                        style={"paddingLeft": "4px"},
+                                                    ),
+                                                    "value": "heatmap_abs",
+                                                },
+                                                {
+                                                    "label": html.Span(
+                                                        "HM(相対)",
+                                                        style={"paddingLeft": "4px"},
+                                                    ),
+                                                    "value": "heatmap_rel",
+                                                },
+                                            ],
+                                            value="abs",
+                                            inline=True,
+                                            style={"display": "flex", "gap": "12px"},
+                                            labelStyle={
+                                                "cursor": "pointer",
+                                                "color": "#e0e0e0",
+                                                "display": "flex",
+                                                "alignItems": "center",
+                                                "fontSize": "13px",
+                                            },
+                                        ),
+                                        html.Div(
+                                            id="param-selector-container",
+                                            style={
+                                                "display": "none",
+                                                "alignItems": "center",
+                                                "gap": "5px",
+                                            },
+                                            children=[
+                                                html.Div(
+                                                    id="param-y-wrapper",
+                                                    style={
+                                                        "display": "none",
+                                                        "alignItems": "center",
+                                                        "gap": "5px",
+                                                    },
+                                                    children=[
+                                                        dcc.Dropdown(
+                                                            id="param-selector-y",
+                                                            options=[],
+                                                            clearable=False,
+                                                            style={
+                                                                "width": "80px",
+                                                                "color": "#333",
+                                                            },
+                                                            className="dash-dropdown",
+                                                        ),
+                                                        html.Span(
+                                                            "×",
+                                                            style={
+                                                                "color": "#aaa",
+                                                                "paddingBottom": "2px",
+                                                            },
+                                                        ),
+                                                    ],
+                                                ),
+                                                dcc.Dropdown(
+                                                    id="param-selector",
+                                                    options=[],
+                                                    clearable=False,
+                                                    style={
+                                                        "width": "80px",
+                                                        "color": "#333",
+                                                    },
+                                                    className="dash-dropdown",
+                                                ),
+                                            ],
+                                        ),
+                                        dcc.Checklist(
+                                            id="log-scale-check",
+                                            options=[
+                                                {
+                                                    "label": html.Span(
+                                                        " Y軸をLogスケール",
+                                                        style={
+                                                            "paddingLeft": "4px",
+                                                            "color": "#e0e0e0",
+                                                        },
+                                                    ),
+                                                    "value": "log",
+                                                }
+                                            ],
+                                            value=[],
+                                            labelStyle={
+                                                "cursor": "pointer",
+                                                "display": "flex",
+                                                "alignItems": "center",
+                                            },
+                                            style={"fontSize": "13px"},
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
+                        dcc.Graph(
+                            id="score-comparison-graph", style={"height": "350px"}
+                        ),
+                    ],
+                ),
+                html.Div(
+                    className="card",
+                    style={
+                        "display": "flex",
+                        "gap": "20px",
+                        "flex": "1",
+                        "padding": "0",
+                        "overflow": "hidden",
+                        "minHeight": "400px",
+                    },
+                    children=[
+                        html.Div(
+                            style={
+                                "flex": "1",
+                                "minWidth": "250px",
+                                "display": "flex",
+                                "flexDirection": "column",
+                                "borderRight": "1px solid #333",
+                                "padding": "20px",
+                            },
+                            children=[
+                                html.Div(
+                                    id="current-timestamp-display",
+                                    style={
+                                        "fontWeight": "bold",
+                                        "marginBottom": "10px",
+                                        "color": "#ccc",
+                                        "flexShrink": "0",
+                                    },
+                                ),
+                                html.Div(
+                                    style={
+                                        "flex": "1",
+                                        "overflowY": "auto",
+                                        "minHeight": "0",
+                                    },
+                                    children=[
+                                        dash_table.DataTable(
+                                            id="file-name-table",
+                                            columns=[
+                                                {"name": "Case", "id": "name"},
+                                                {
+                                                    "name": "Score",
+                                                    "id": "score",
+                                                    "type": "numeric",
+                                                },
+                                                {
+                                                    "name": "Time",
+                                                    "id": "time",
+                                                    "type": "numeric",
+                                                    "format": {"specifier": ".3f"},
+                                                },
+                                                {
+                                                    "name": "Best",
+                                                    "id": "best",
+                                                    "type": "numeric",
+                                                },
+                                                {
+                                                    "name": "Rel",
+                                                    "id": "rel",
+                                                    "type": "numeric",
+                                                    "format": {"specifier": ".3f"},
+                                                },
+                                            ],
+                                            sort_action="native",
+                                            style_cell={
+                                                "textAlign": "left",
+                                                "padding": "8px",
+                                                "fontFamily": "monospace",
+                                                "fontSize": "13px",
+                                                "backgroundColor": "#1e1e1e",
+                                                "color": "#e0e0e0",
+                                                "border": "1px solid #444",
+                                            },
+                                            style_header={
+                                                "fontWeight": "bold",
+                                                "backgroundColor": "#2d2d2d",
+                                                "color": "#e0e0e0",
+                                                "border": "1px solid #444",
+                                            },
+                                            cell_selectable=True,
+                                            style_as_list_view=True,
+                                        )
+                                    ],
+                                ),
+                            ],
+                        ),
+                        html.Div(
+                            style={
+                                "flex": "3",
+                                "display": "flex",
+                                "flexDirection": "column",
+                                "height": "100%",
+                                "minWidth": "0",
+                            },
+                            children=[
+                                dcc.Tabs(
+                                    id="detail-tabs",
+                                    value="tab-text",
+                                    className="custom-tabs",
+                                    children=[
+                                        dcc.Tab(
+                                            label="標準出力 (err/out)",
+                                            value="tab-text",
+                                            className="custom-tab",
+                                            selected_className="custom-tab--selected",
+                                        ),
+                                        dcc.Tab(
+                                            label="Diff (ソースコード)",
+                                            value="tab-diff",
+                                            className="custom-tab",
+                                            selected_className="custom-tab--selected",
+                                        ),
+                                        dcc.Tab(
+                                            label="ビジュアライザ",
+                                            value="tab-vis",
+                                            className="custom-tab",
+                                            selected_className="custom-tab--selected",
+                                        ),
+                                    ],
+                                ),
+                                html.Div(
+                                    id="tab-content",
+                                    style={
+                                        "flex": "1",
+                                        "padding": "20px",
+                                        "overflowY": "auto",
+                                        "display": "flex",
+                                        "flexDirection": "column",
+                                        "minHeight": "0",
+                                    },
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        ),
+    ],
+)
 
 
 @app.callback(
@@ -443,12 +922,15 @@ app.layout = html.Div(className="layout-container", children=[
     Input("timestamp-table", "selected_rows"),
     State("prev-selected-rows", "data"),
     State("target-ts-store", "data"),
-    State("table-data", "data")
+    State("table-data", "data"),
 )
 def update_target_store(selected_rows, prev_selected, current_target, table_data):
-    if selected_rows is None: selected_rows = []
-    if prev_selected is None: prev_selected = []
-    if not table_data: return None, selected_rows
+    if selected_rows is None:
+        selected_rows = []
+    if prev_selected is None:
+        prev_selected = []
+    if not table_data:
+        return None, selected_rows
 
     added = [r for r in selected_rows if r not in prev_selected]
     new_target = current_target
@@ -458,7 +940,9 @@ def update_target_store(selected_rows, prev_selected, current_target, table_data
         if last_added < len(table_data):
             new_target = table_data[last_added]["timestamp"]
     else:
-        selected_ts_list = [table_data[r]["timestamp"] for r in selected_rows if r < len(table_data)]
+        selected_ts_list = [
+            table_data[r]["timestamp"] for r in selected_rows if r < len(table_data)
+        ]
         if new_target not in selected_ts_list:
             if selected_ts_list:
                 new_target = sorted(selected_ts_list)[-1]
@@ -475,7 +959,7 @@ def update_target_store(selected_rows, prev_selected, current_target, table_data
     Input("btn-stop-task", "n_clicks"),
     Input("btn-clear-queue", "n_clicks"),
     Input("task-interval", "n_intervals"),
-    prevent_initial_call=False
+    prevent_initial_call=False,
 )
 def update_queue(n_test, n_opt, n_stop, n_clear, n_intervals):
     triggered = ctx.triggered_id
@@ -492,7 +976,9 @@ def update_queue(n_test, n_opt, n_stop, n_clear, n_intervals):
 
     lines = []
     if status["current"]:
-        lines.append(f"🟢 [Running] {status['current']['type'].upper()} (sent: {status['current']['time']})")
+        lines.append(
+            f"🟢 [Running] {status['current']['type'].upper()} (sent: {status['current']['time']})"
+        )
     else:
         lines.append("⚪ [Idle] 待機中")
 
@@ -524,7 +1010,7 @@ def auto_reload_on_finish(n_int, was_running, reload_clicks):
     Output("pin-btn", "title"),
     Input("pin-btn", "n_clicks"),
     State("sidebar-container", "className"),
-    prevent_initial_call=True
+    prevent_initial_call=True,
 )
 def toggle_sidebar_pin(n_clicks, current_class):
     if "sidebar-unpinned" in current_class:
@@ -532,17 +1018,25 @@ def toggle_sidebar_pin(n_clicks, current_class):
     else:
         return "sidebar-base sidebar-unpinned", "📌", "サイドバーを固定する"
 
+
 @app.callback(
     Output("param-selector-container", "style"),
     Output("param-y-wrapper", "style"),
-    Input("graph-type", "value")
+    Input("graph-type", "value"),
 )
 def toggle_param_selector(graph_type):
     if graph_type in ["heatmap_abs", "heatmap_rel"]:
-        return {"display": "flex", "alignItems": "center", "gap": "5px"}, {"display": "flex", "alignItems": "center", "gap": "5px"}
+        return {"display": "flex", "alignItems": "center", "gap": "5px"}, {
+            "display": "flex",
+            "alignItems": "center",
+            "gap": "5px",
+        }
     elif graph_type in ["param_scatter", "param_box", "param_line"]:
-        return {"display": "flex", "alignItems": "center", "gap": "5px"}, {"display": "none"}
+        return {"display": "flex", "alignItems": "center", "gap": "5px"}, {
+            "display": "none"
+        }
     return {"display": "none"}, {"display": "none"}
+
 
 @app.callback(
     Output("param-selector", "options"),
@@ -551,12 +1045,13 @@ def toggle_param_selector(graph_type):
     Output("param-selector-y", "value"),
     Input("reload-button", "n_clicks"),
     State("param-selector", "value"),
-    State("param-selector-y", "value")
+    State("param-selector-y", "value"),
 )
 def update_param_options(n, current_x, current_y):
     meta_df = load_meta_data()
     cols = [c for c in meta_df.columns if c != "test_id"]
-    if not cols: return [], None, [], None
+    if not cols:
+        return [], None, [], None
 
     options = [{"label": c, "value": c} for c in cols]
 
@@ -565,14 +1060,16 @@ def update_param_options(n, current_x, current_y):
 
     return options, val_x, options, val_y
 
+
 @app.callback(
     Output("base-store", "data"),
     Input("timestamp-table", "active_cell"),
     State("table-data", "data"),
-    State("base-store", "data")
+    State("base-store", "data"),
 )
 def update_base_store(active_cell, table_data, current_base):
-    if not active_cell or not table_data: return current_base
+    if not active_cell or not table_data:
+        return current_base
     if active_cell["column_id"] == "is_base_str":
         base_ts = active_cell.get("row_id")
         if base_ts:
@@ -582,20 +1079,23 @@ def update_base_store(active_cell, table_data, current_base):
             return table_data[row_idx]["timestamp"]
     return current_base
 
+
 def get_memo(ts):
     memo_path = os.path.join(BASE_PATH, ts, "memo.txt")
     if os.path.exists(memo_path):
         try:
             with open(memo_path, "r", encoding="utf-8") as f:
                 return f.read().strip()
-        except: pass
+        except:
+            pass
     return ""
+
 
 @app.callback(
     Output("dummy-output", "children"),
     Input("timestamp-table", "data"),
     State("timestamp-table", "data_previous"),
-    prevent_initial_call=True
+    prevent_initial_call=True,
 )
 def save_memo(current_data, previous_data):
     if current_data and previous_data:
@@ -608,8 +1108,10 @@ def save_memo(current_data, previous_data):
                 try:
                     with open(memo_path, "w", encoding="utf-8") as f:
                         f.write(c_memo)
-                except: pass
+                except:
+                    pass
     return dash.no_update
+
 
 @app.callback(
     Output("timestamp-table", "data"),
@@ -617,12 +1119,16 @@ def save_memo(current_data, previous_data):
     Input("reload-button", "n_clicks"),
     Input("base-store", "data"),
     Input("timestamp-table", "active_cell"),
-    State("table-data", "data")
+    State("table-data", "data"),
 )
 def update_table(n, base_ts, active_cell, current_data):
     triggered = ctx.triggered_id
 
-    if triggered == "timestamp-table" and active_cell and active_cell.get("column_id") == "delete_btn":
+    if (
+        triggered == "timestamp-table"
+        and active_cell
+        and active_cell.get("column_id") == "delete_btn"
+    ):
         ts_to_delete = active_cell.get("row_id")
         if not ts_to_delete:
             row_idx = active_cell["row"]
@@ -635,29 +1141,40 @@ def update_table(n, base_ts, active_cell, current_data):
                 shutil.rmtree(dir_path)
 
     df = load_data()
-    if df.empty: return [], []
+    if df.empty:
+        return [], []
 
     timestamps = sorted(df["timestamp"].unique())
-    if not timestamps: return [], []
+    if not timestamps:
+        return [], []
 
     if base_ts not in timestamps:
         base_ts = timestamps[0]
 
-    base_df = df[df["timestamp"] == base_ts][["test_id", "score"]].rename(columns={"score": "base_score"})
+    base_df = df[df["timestamp"] == base_ts][["test_id", "score"]].rename(
+        columns={"score": "base_score"}
+    )
     merged = pd.merge(df, base_df, on="test_id", how="left")
 
     merged["rel_score"] = merged.apply(
-        lambda r: r["score"] / r["base_score"] if pd.notna(r["base_score"]) and r["base_score"] != 0 else 1.0,
-        axis=1
+        lambda r: (
+            r["score"] / r["base_score"]
+            if pd.notna(r["base_score"]) and r["base_score"] != 0
+            else 1.0
+        ),
+        axis=1,
     )
 
-    grouped = merged.groupby("timestamp").agg(
-        average_score=("score", "mean"),
-        rel_ave=("rel_score", "mean")
-    ).reset_index()
+    grouped = (
+        merged.groupby("timestamp")
+        .agg(average_score=("score", "mean"), rel_ave=("rel_score", "mean"))
+        .reset_index()
+    )
 
     grouped["formatted"] = grouped["timestamp"].apply(format_timestamp)
-    grouped["is_base_str"] = grouped["timestamp"].apply(lambda ts: "★" if ts == base_ts else "・")
+    grouped["is_base_str"] = grouped["timestamp"].apply(
+        lambda ts: "★" if ts == base_ts else "・"
+    )
     grouped["delete_btn"] = "🗑️"
     grouped["memo"] = grouped["timestamp"].apply(get_memo)
     grouped = grouped.sort_values("timestamp")
@@ -680,7 +1197,8 @@ def update_table(n, base_ts, active_cell, current_data):
 )
 def handle_selection(n_latest, n_all, n_clear, n_reload, native_selected, data):
     triggered = ctx.triggered_id
-    if not data: return []
+    if not data:
+        return []
 
     selected = native_selected if native_selected else []
     selected = [s for s in selected if s < len(data)]
@@ -697,6 +1215,7 @@ def handle_selection(n_latest, n_all, n_clear, n_reload, native_selected, data):
 
     return selected
 
+
 @app.callback(
     Output("current-timestamp-display", "children"),
     Input("target-ts-store", "data"),
@@ -706,29 +1225,51 @@ def show_current_timestamp(target_ts):
         return "テストケース詳細 (選択されていません)"
     return f"詳細表示: {target_ts}"
 
+
 @app.callback(
     Output("file-name-table", "data"),
     Input("target-ts-store", "data"),
-    Input("base-store", "data")
+    Input("base-store", "data"),
 )
 def update_file_table(target_ts, base_ts):
-    if not target_ts: return []
+    if not target_ts:
+        return []
     df_all = load_data()
-    if df_all.empty: return []
+    if df_all.empty:
+        return []
 
     df_all["score"] = pd.to_numeric(df_all["score"], errors="coerce")
 
     if DIRECTION == "minimize":
-        best_df = df_all.groupby("name")["score"].min().reset_index().rename(columns={"score": "best"})
+        best_df = (
+            df_all.groupby("name")["score"]
+            .min()
+            .reset_index()
+            .rename(columns={"score": "best"})
+        )
     else:
-        best_df = df_all.groupby("name")["score"].max().reset_index().rename(columns={"score": "best"})
+        best_df = (
+            df_all.groupby("name")["score"]
+            .max()
+            .reset_index()
+            .rename(columns={"score": "best"})
+        )
 
     df = df_all[df_all["timestamp"] == target_ts].copy()
 
     if base_ts:
-        base_df = df_all[df_all["timestamp"] == base_ts][["name", "score"]].rename(columns={"score": "base_score"})
+        base_df = df_all[df_all["timestamp"] == base_ts][["name", "score"]].rename(
+            columns={"score": "base_score"}
+        )
         df = pd.merge(df, base_df, on="name", how="left")
-        df["rel"] = df.apply(lambda r: r["score"] / r["base_score"] if pd.notna(r["base_score"]) and r["base_score"] != 0 else 1.0, axis=1)
+        df["rel"] = df.apply(
+            lambda r: (
+                r["score"] / r["base_score"]
+                if pd.notna(r["base_score"]) and r["base_score"] != 0
+                else 1.0
+            ),
+            axis=1,
+        )
     else:
         df["rel"] = 1.0
 
@@ -741,6 +1282,7 @@ def update_file_table(target_ts, base_ts):
 
     return records
 
+
 @app.callback(
     Output("score-comparison-graph", "figure"),
     Output("summary-text", "children"),
@@ -751,13 +1293,20 @@ def update_file_table(target_ts, base_ts):
     Input("log-scale-check", "value"),
     Input("target-ts-store", "data"),
     State("table-data", "data"),
-    State("base-store", "data")
+    State("base-store", "data"),
 )
-def update_graph(rows, graph_type, param_x, param_y, log_scale, target_ts, table_data, base_ts):
+def update_graph(
+    rows, graph_type, param_x, param_y, log_scale, target_ts, table_data, base_ts
+):
     valid_rows = [r for r in rows if r < len(table_data)] if rows else []
     if not valid_rows or not target_ts:
         fig = px.line(title="（実行結果が選択されていません）")
-        fig.update_layout(template="plotly_dark", margin=dict(l=20, r=20, t=20, b=20), paper_bgcolor="#1e1e1e", plot_bgcolor="#1e1e1e")
+        fig.update_layout(
+            template="plotly_dark",
+            margin=dict(l=20, r=20, t=20, b=20),
+            paper_bgcolor="#1e1e1e",
+            plot_bgcolor="#1e1e1e",
+        )
         return fig, ""
 
     selected_timestamps = [table_data[i]["timestamp"] for i in valid_rows]
@@ -780,20 +1329,50 @@ def update_graph(rows, graph_type, param_x, param_y, log_scale, target_ts, table
     sorted_ts = sorted(selected_timestamps)
 
     if graph_type == "abs":
-        fig = px.line(df, x="test_id", y="score", color="timestamp", markers=True, category_orders={"timestamp": sorted_ts})
+        fig = px.line(
+            df,
+            x="test_id",
+            y="score",
+            color="timestamp",
+            markers=True,
+            category_orders={"timestamp": sorted_ts},
+        )
         fig.update_layout(yaxis_title="Score")
 
     elif graph_type == "rel":
-        base_df = df_all[df_all["timestamp"] == base_ts][["test_id", "score"]].rename(columns={"score": "base_score"})
+        base_df = df_all[df_all["timestamp"] == base_ts][["test_id", "score"]].rename(
+            columns={"score": "base_score"}
+        )
         merged = pd.merge(df, base_df, on="test_id", how="left")
-        merged["relative_score"] = merged.apply(lambda r: r["score"] / r["base_score"] if pd.notna(r["base_score"]) and r["base_score"] != 0 else 1.0, axis=1)
-        fig = px.line(merged, x="test_id", y="relative_score", color="timestamp", markers=True, category_orders={"timestamp": sorted_ts})
-        fig.add_hline(y=1.0, line_dash="dash", line_color="#888", annotation_text=f"Base: {base_ts}")
+        merged["relative_score"] = merged.apply(
+            lambda r: (
+                r["score"] / r["base_score"]
+                if pd.notna(r["base_score"]) and r["base_score"] != 0
+                else 1.0
+            ),
+            axis=1,
+        )
+        fig = px.line(
+            merged,
+            x="test_id",
+            y="relative_score",
+            color="timestamp",
+            markers=True,
+            category_orders={"timestamp": sorted_ts},
+        )
+        fig.add_hline(
+            y=1.0,
+            line_dash="dash",
+            line_color="#888",
+            annotation_text=f"Base: {base_ts}",
+        )
         fig.update_layout(yaxis_title="Relative Score")
 
     elif graph_type == "box":
         counts = df.groupby("timestamp").size()
-        df["ts_with_count"] = df["timestamp"].apply(lambda t: f"{t}<br>(n={counts.get(t,0)})")
+        df["ts_with_count"] = df["timestamp"].apply(
+            lambda t: f"{t}<br>(n={counts.get(t,0)})"
+        )
         sorted_ts_labels = [f"{t}<br>(n={counts.get(t,0)})" for t in sorted_ts]
         fig = px.box(df, x="ts_with_count", y="score", color="timestamp")
         fig.update_xaxes(categoryorder="array", categoryarray=sorted_ts_labels)
@@ -805,20 +1384,50 @@ def update_graph(rows, graph_type, param_x, param_y, log_scale, target_ts, table
         if not meta_df.empty and param_col in meta_df.columns:
             merged = pd.merge(df, meta_df, on="test_id", how="left")
             if graph_type == "param_scatter":
-                fig = px.scatter(merged, x=param_col, y="score", color="timestamp", hover_data=["test_id"], category_orders={"timestamp": sorted_ts})
+                fig = px.scatter(
+                    merged,
+                    x=param_col,
+                    y="score",
+                    color="timestamp",
+                    hover_data=["test_id"],
+                    category_orders={"timestamp": sorted_ts},
+                )
             elif graph_type == "param_box":
-                fig = px.box(merged, x=param_col, y="score", color="timestamp", category_orders={"timestamp": sorted_ts})
+                fig = px.box(
+                    merged,
+                    x=param_col,
+                    y="score",
+                    color="timestamp",
+                    category_orders={"timestamp": sorted_ts},
+                )
             elif graph_type == "param_line":
-                avg_df = merged.groupby([param_col, "timestamp"])["score"].mean().reset_index()
-                fig = px.line(avg_df, x=param_col, y="score", color="timestamp", markers=True, category_orders={"timestamp": sorted_ts})
-            fig.update_layout(xaxis_title=f"Parameter: {param_col}", yaxis_title="Score")
+                avg_df = (
+                    merged.groupby([param_col, "timestamp"])["score"]
+                    .mean()
+                    .reset_index()
+                )
+                fig = px.line(
+                    avg_df,
+                    x=param_col,
+                    y="score",
+                    color="timestamp",
+                    markers=True,
+                    category_orders={"timestamp": sorted_ts},
+                )
+            fig.update_layout(
+                xaxis_title=f"Parameter: {param_col}", yaxis_title="Score"
+            )
         else:
             fig = px.scatter(title="（パラメータ情報を取得できませんでした）")
             fig.update_layout(paper_bgcolor="#1e1e1e", plot_bgcolor="#1e1e1e")
 
     elif graph_type in ["heatmap_abs", "heatmap_rel"]:
         meta_df = load_meta_data()
-        if not meta_df.empty and param_x in meta_df.columns and param_y in meta_df.columns:
+        if (
+            not meta_df.empty
+            and param_x in meta_df.columns
+            and param_y in meta_df.columns
+        ):
             df_hm = df_all[df_all["timestamp"] == target_ts]
             df_hm = df_hm[pd.to_numeric(df_hm["score"], errors="coerce").notna()]
             df_hm["score"] = df_hm["score"].astype(float)
@@ -826,9 +1435,18 @@ def update_graph(rows, graph_type, param_x, param_y, log_scale, target_ts, table
             merged = pd.merge(df_hm, meta_df, on="test_id", how="left")
 
             if graph_type == "heatmap_rel":
-                base_df = df_all[df_all["timestamp"] == base_ts][["test_id", "score"]].rename(columns={"score": "base_score"})
+                base_df = df_all[df_all["timestamp"] == base_ts][
+                    ["test_id", "score"]
+                ].rename(columns={"score": "base_score"})
                 merged = pd.merge(merged, base_df, on="test_id", how="left")
-                merged["val"] = merged.apply(lambda r: r["score"] / r["base_score"] if pd.notna(r["base_score"]) and r["base_score"] != 0 else 1.0, axis=1)
+                merged["val"] = merged.apply(
+                    lambda r: (
+                        r["score"] / r["base_score"]
+                        if pd.notna(r["base_score"]) and r["base_score"] != 0
+                        else 1.0
+                    ),
+                    axis=1,
+                )
             else:
                 merged["val"] = merged["score"]
 
@@ -862,7 +1480,11 @@ def update_graph(rows, graph_type, param_x, param_y, log_scale, target_ts, table
 
             fig = px.imshow(
                 pivot_df.values,
-                labels=dict(x=f"{param_x}", y=f"{param_y}", color="Rel Ave" if graph_type=="heatmap_rel" else "Abs Ave"),
+                labels=dict(
+                    x=f"{param_x}",
+                    y=f"{param_y}",
+                    color="Rel Ave" if graph_type == "heatmap_rel" else "Abs Ave",
+                ),
                 x=[str(x) for x in pivot_df.columns],
                 y=[str(y) for y in pivot_df.index],
                 aspect="auto",
@@ -870,9 +1492,11 @@ def update_graph(rows, graph_type, param_x, param_y, log_scale, target_ts, table
                 color_continuous_midpoint=zmid,
                 range_color=safe_range,
                 origin="lower",
-                text_auto=text_fmt
+                text_auto=text_fmt,
             )
-            fig.update_layout(xaxis_title=f"Parameter: {param_x}", yaxis_title=f"Parameter: {param_y}")
+            fig.update_layout(
+                xaxis_title=f"Parameter: {param_x}", yaxis_title=f"Parameter: {param_y}"
+            )
         else:
             fig = px.scatter(title="（パラメータ情報を取得できませんでした）")
             fig.update_layout(paper_bgcolor="#1e1e1e", plot_bgcolor="#1e1e1e")
@@ -894,7 +1518,7 @@ def update_graph(rows, graph_type, param_x, param_y, log_scale, target_ts, table
         paper_bgcolor="#1e1e1e",
         plot_bgcolor="#1e1e1e",
         uirevision=True,
-        yaxis_type=yaxis_type
+        yaxis_type=yaxis_type,
     )
 
     if xaxis_type:
@@ -917,7 +1541,7 @@ def update_graph(rows, graph_type, param_x, param_y, log_scale, target_ts, table
     Input("target-ts-store", "data"),
     State("file-name-table", "data"),
     State("base-store", "data"),
-    State("table-data", "data") # 追加: 初期Base判定のため
+    State("table-data", "data"),  # 追加: 初期Base判定のため
 )
 def render_tab_content(tab, active_cell, target_ts, file_data, base_ts, table_data):
     if not target_ts:
@@ -938,30 +1562,52 @@ def render_tab_content(tab, active_cell, target_ts, file_data, base_ts, table_da
             diff_text = "(Baseとなる比較対象が見つかりません)"
             src_label = target_src_name
         else:
-            diff_lines = list(difflib.unified_diff(
-                base_src.splitlines(),
-                target_src.splitlines(),
-                fromfile=f"Base ({base_ts}/{base_src_name})",
-                tofile=f"Target ({target_ts}/{target_src_name})",
-                lineterm=""
-            ))
-            
+            diff_lines = list(
+                difflib.unified_diff(
+                    base_src.splitlines(),
+                    target_src.splitlines(),
+                    fromfile=f"Base ({base_ts}/{base_src_name})",
+                    tofile=f"Target ({target_ts}/{target_src_name})",
+                    lineterm="",
+                )
+            )
+
             diff_text = "\n".join(diff_lines)
             if not diff_text.strip():
                 diff_text = "差分はありません (同一コードです)"
             src_label = target_src_name or base_src_name
 
-        return html.Div(style={"display": "flex", "flexDirection": "column", "gap": "10px", "height": "100%"}, children=[
-            html.H4(f"ソースコード 差分 ({src_label}) [Base vs Target]", style={"margin": "0", "color": "#ccc"}),
-            html.Div(className="code-container", style={"flex": "1"}, children=[
-                dcc.Clipboard(content=diff_text, className="clipboard-btn"),
-                dcc.Textarea(value=diff_text, className="code-textarea", readOnly=True)
-            ])
-        ])
+        return html.Div(
+            style={
+                "display": "flex",
+                "flexDirection": "column",
+                "gap": "10px",
+                "height": "100%",
+            },
+            children=[
+                html.H4(
+                    f"ソースコード 差分 ({src_label}) [Base vs Target]",
+                    style={"margin": "0", "color": "#ccc"},
+                ),
+                html.Div(
+                    className="code-container",
+                    style={"flex": "1"},
+                    children=[
+                        dcc.Clipboard(content=diff_text, className="clipboard-btn"),
+                        dcc.Textarea(
+                            value=diff_text, className="code-textarea", readOnly=True
+                        ),
+                    ],
+                ),
+            ],
+        )
 
     # ==== 【2】標準出力・ビジュアライザタブ (左のリストからケースの選択が必須) ====
     if not active_cell or not file_data:
-        return html.Div("ファイルが選択されていません。左の表からCaseを選択してください。", style={"color": "#ccc"})
+        return html.Div(
+            "ファイルが選択されていません。左の表からCaseを選択してください。",
+            style={"color": "#ccc"},
+        )
 
     filename = active_cell.get("row_id")
     if not filename:
@@ -974,22 +1620,72 @@ def render_tab_content(tab, active_cell, target_ts, file_data, base_ts, table_da
     if tab == "tab-text":
         err_text, out_text = load_single_err_out(timestamp, filename)
 
-        return html.Div(style={"display": "flex", "flexDirection": "column", "gap": "20px", "height": "100%"}, children=[
-            html.Div(style={"flex": "1", "display": "flex", "flexDirection": "column", "minHeight": "0"}, children=[
-                html.H4("標準エラー出力 (err)", style={"margin": "0 0 10px 0", "color": "#ccc"}),
-                html.Div(className="code-container", style={"flex": "1"}, children=[
-                    dcc.Clipboard(content=err_text, className="clipboard-btn"),
-                    dcc.Textarea(value=err_text, className="code-textarea", readOnly=True)
-                ])
-            ]),
-            html.Div(style={"flex": "1", "display": "flex", "flexDirection": "column", "minHeight": "0"}, children=[
-                html.H4("標準出力 (out)", style={"margin": "0 0 10px 0", "color": "#ccc"}),
-                html.Div(className="code-container", style={"flex": "1"}, children=[
-                    dcc.Clipboard(content=out_text, className="clipboard-btn"),
-                    dcc.Textarea(value=out_text, className="code-textarea", readOnly=True)
-                ])
-            ])
-        ])
+        return html.Div(
+            style={
+                "display": "flex",
+                "flexDirection": "column",
+                "gap": "20px",
+                "height": "100%",
+            },
+            children=[
+                html.Div(
+                    style={
+                        "flex": "1",
+                        "display": "flex",
+                        "flexDirection": "column",
+                        "minHeight": "0",
+                    },
+                    children=[
+                        html.H4(
+                            "標準エラー出力 (err)",
+                            style={"margin": "0 0 10px 0", "color": "#ccc"},
+                        ),
+                        html.Div(
+                            className="code-container",
+                            style={"flex": "1"},
+                            children=[
+                                dcc.Clipboard(
+                                    content=err_text, className="clipboard-btn"
+                                ),
+                                dcc.Textarea(
+                                    value=err_text,
+                                    className="code-textarea",
+                                    readOnly=True,
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+                html.Div(
+                    style={
+                        "flex": "1",
+                        "display": "flex",
+                        "flexDirection": "column",
+                        "minHeight": "0",
+                    },
+                    children=[
+                        html.H4(
+                            "標準出力 (out)",
+                            style={"margin": "0 0 10px 0", "color": "#ccc"},
+                        ),
+                        html.Div(
+                            className="code-container",
+                            style={"flex": "1"},
+                            children=[
+                                dcc.Clipboard(
+                                    content=out_text, className="clipboard-btn"
+                                ),
+                                dcc.Textarea(
+                                    value=out_text,
+                                    className="code-textarea",
+                                    readOnly=True,
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
 
     elif tab == "tab-vis":
         in_text = load_in_file_content(filename)
@@ -1004,9 +1700,21 @@ def render_tab_content(tab, active_cell, target_ts, file_data, base_ts, table_da
             js_data_block = f"<script>\nconst INPUT_DATA = {json.dumps(in_text)};\nconst OUTPUT_DATA = {json.dumps(out_text)};\n</script>"
             src_doc = html_template.replace("</body>", f"{js_data_block}\n</body>")
 
-            return html.Iframe(srcDoc=src_doc, style={"width": "100%", "height": "100%", "border": "none", "backgroundColor": "#fff"})
+            return html.Iframe(
+                srcDoc=src_doc,
+                style={
+                    "width": "100%",
+                    "height": "100%",
+                    "border": "none",
+                    "backgroundColor": "#fff",
+                },
+            )
         else:
-            return html.Div("ビジュアライザのHTMLファイルが見つかりません。", style={"color": "#e57373", "fontWeight": "bold", "padding": "20px"})
+            return html.Div(
+                "ビジュアライザのHTMLファイルが見つかりません。",
+                style={"color": "#e57373", "fontWeight": "bold", "padding": "20px"},
+            )
+
 
 if __name__ == "__main__":
     app.run(debug=False)
