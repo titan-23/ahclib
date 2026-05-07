@@ -35,32 +35,24 @@ def get_args() -> argparse.Namespace:
         default="ahc_settings.py",
     )
     parser.add_argument(
-        "-c",
         "--compile",
-        required=False,
-        default=False,
-        action="store_true",
+        default=True,
+        action=argparse.BooleanOptionalAction,
     )
     parser.add_argument(
-        "-v",
         "--verbose",
-        required=False,
-        default=False,
-        action="store_true",
+        default=True,
+        action=argparse.BooleanOptionalAction,
     )
     parser.add_argument(
-        "-r",
         "--record",
-        required=False,
-        default=False,
-        action="store_true",
+        default=True,
+        action=argparse.BooleanOptionalAction,
     )
     parser.add_argument(
-        "-w",
         "--wilcoxon",
-        required=False,
-        default=False,
-        action="store_true",
+        default=True,
+        action=argparse.BooleanOptionalAction,
     )
     parser.add_argument(
         "-a",
