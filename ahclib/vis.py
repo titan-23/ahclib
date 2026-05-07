@@ -684,6 +684,20 @@ app.layout = html.Div(
                                                     ),
                                                     "value": "heatmap_rel",
                                                 },
+                                                {
+                                                    "label": html.Span(
+                                                        "CV(Box)",
+                                                        style={"paddingLeft": "4px"},
+                                                    ),
+                                                    "value": "difficulty_box",
+                                                },
+                                                {
+                                                    "label": html.Span(
+                                                        "CV(HM)",
+                                                        style={"paddingLeft": "4px"},
+                                                    ),
+                                                    "value": "difficulty_heatmap",
+                                                },
                                             ],
                                             value="abs",
                                             inline=True,
@@ -1025,13 +1039,13 @@ def toggle_sidebar_pin(n_clicks, current_class):
     Input("graph-type", "value"),
 )
 def toggle_param_selector(graph_type):
-    if graph_type in ["heatmap_abs", "heatmap_rel"]:
+    if graph_type in ["heatmap_abs", "heatmap_rel", "difficulty_heatmap"]:
         return {"display": "flex", "alignItems": "center", "gap": "5px"}, {
             "display": "flex",
             "alignItems": "center",
             "gap": "5px",
         }
-    elif graph_type in ["param_scatter", "param_box", "param_line"]:
+    elif graph_type in ["param_scatter", "param_box", "param_line", "difficulty_box"]:
         return {"display": "flex", "alignItems": "center", "gap": "5px"}, {
             "display": "none"
         }
@@ -1417,9 +1431,75 @@ def update_graph(
             fig.update_layout(
                 xaxis_title=f"Parameter: {param_col}", yaxis_title="Score"
             )
-        else:
+
+    elif graph_type in ["difficulty_box", "difficulty_heatmap"]:
+        n = len(selected_timestamps)
+        summary_msg = f"CV分析: {n}件の実行結果"
+        if n < 2:
+            summary_msg += " ⚠️ 2件以上選択してください"
+        # 選択された全実行結果のデータを使ってケースごとのCVを算出
+        df_cv = df_all[df_all["timestamp"].isin(selected_timestamps)].copy()
+        df_cv["score"] = pd.to_numeric(df_cv["score"], errors="coerce")
+        df_cv = df_cv.dropna(subset=["score"])
+
+        # ケースごとにCV（標準偏差÷平均）を算出
+        cv_df = (
+            df_cv.groupby("test_id")["score"]
+            .agg(cv=lambda x: x.std() / x.mean() if x.mean() != 0 and len(x) > 1 else 0.0)
+            .reset_index()
+        )
+
+        meta_df = load_meta_data()
+        param_col = param_x
+
+        if meta_df.empty or param_col not in meta_df.columns:
             fig = px.scatter(title="（パラメータ情報を取得できませんでした）")
             fig.update_layout(paper_bgcolor="#1e1e1e", plot_bgcolor="#1e1e1e")
+        else:
+            merged = pd.merge(cv_df, meta_df, on="test_id", how="left")
+            merged[param_col] = pd.to_numeric(merged[param_col], errors="coerce")
+            merged = merged.dropna(subset=[param_col])
+
+            if graph_type == "difficulty_box":
+                fig = px.box(
+                    merged,
+                    x=param_col,
+                    y="cv",
+                    labels={param_col: f"Parameter: {param_col}", "cv": "CV (std/mean)"},
+                    category_orders={param_col: sorted(merged[param_col].unique())},
+                )
+                fig.update_traces(marker_color="#29b6f6")
+
+            else:  # difficulty_heatmap
+                param_col_y = param_y
+                if param_col_y not in meta_df.columns:
+                    fig = px.scatter(title="（Y軸パラメータ情報を取得できませんでした）")
+                    fig.update_layout(paper_bgcolor="#1e1e1e", plot_bgcolor="#1e1e1e")
+                else:
+                    merged[param_col_y] = pd.to_numeric(merged[param_col_y], errors="coerce")
+                    merged = merged.dropna(subset=[param_col_y])
+                    avg_cv = (
+                        merged.groupby([param_col_y, param_col])["cv"]
+                        .mean()
+                        .reset_index()
+                    )
+                    pivot_df = avg_cv.pivot(index=param_col_y, columns=param_col, values="cv")
+                    pivot_df = pivot_df.sort_index().sort_index(axis=1).astype(float)
+
+                    fig = px.imshow(
+                        pivot_df.values,
+                        labels=dict(x=f"{param_col}", y=f"{param_col_y}", color="CV Mean"),
+                        x=[str(x) for x in pivot_df.columns],
+                        y=[str(y) for y in pivot_df.index],
+                        aspect="auto",
+                        color_continuous_scale=[[0.0, "#1e1e1e"], [1.0, "#f44336"]],
+                        origin="lower",
+                        text_auto=".3f",
+                    )
+                    fig.update_layout(
+                        xaxis_title=f"Parameter: {param_col}",
+                        yaxis_title=f"Parameter: {param_col_y}",
+                    )
 
     elif graph_type in ["heatmap_abs", "heatmap_rel"]:
         meta_df = load_meta_data()
