@@ -39,7 +39,8 @@ class AHCSettings:
     # optuna の試行回数
     n_trials = 50
 
-    # optuna の cpu_count / 1 推奨!
+    # optuna の cpu_count
+    # HINT: wilcoxonで枝刈りが行われるので、njobsをある程度小さくしてnjobs_optunaを数個にするとよさそう
     njobs_optuna = 1
 
     @staticmethod
