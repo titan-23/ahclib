@@ -33,30 +33,32 @@ class Optimizer:
 
         start = time.time()
 
-        tester: ParallelTester = build_tester(
-            self.settings,
-            njobs=self.settings.njobs,
-            verbose=False,
-        )
-
         def _objective(trial: optuna.trial.Trial) -> float:
+            tester: ParallelTester = build_tester(
+                self.settings,
+                njobs=self.settings.njobs,
+                verbose=False,
+            )
             args = self.settings.objective(trial)
-            tester.clear_execute_command()
             tester.append_execute_command(args)
             scores = tester.run()
             score = tester.get_score(scores)
             return score
 
         def _objective_wilcoxon_pruner(trial: optuna.trial.Trial) -> float:
+            tester: ParallelTester = build_tester(
+                self.settings,
+                njobs=self.settings.njobs,
+                verbose=False,
+            )
             args = self.settings.objective(trial)
-            tester.clear_execute_command()
             tester.append_execute_command(args)
             scores = tester.run_opt_wilcoxon(trial)
             if None in scores:
-                pruned_cnt = len(scores) - scores.count(None)
+                tried_cnt = len(scores) - scores.count(None)
                 logger.info(
                     to_green(
-                        f"pruned ! | {str(pruned_cnt).zfill(len(str(int(len(scores)))))} / {len(scores)}"
+                        f"pruned ! | {str(tried_cnt).zfill(len(str(int(len(scores)))))} / {len(scores)}"
                     )
                 )
                 raise optuna.TrialPruned()
@@ -121,6 +123,11 @@ class Optimizer:
                 exit(1)
             logger.info(f"==============================================")
 
+            tester: ParallelTester = build_tester(
+                self.settings,
+                njobs=self.settings.njobs,
+                verbose=False,
+            )
             tester.compile()
             study.optimize(
                 _objective_func,
