@@ -4,8 +4,8 @@ from typing import Optional, Callable
 from ahclib.ahc_util import avg_score, geo_score, to_red
 
 """example
-python3 -m ahclib test -v -c -r
-python3 -m opt -w
+python3 -m ahclib test
+python3 -m opt
 """
 
 
