@@ -204,13 +204,14 @@ def worker_process_file(args) -> tuple[str, float, float, str, str]:
             else:
                 log_parts.append(f"Ave: {ave_s}")
             logger.info(f"| {' | '.join(log_parts)} |")
-            if record:
-                err_path = os.path.join(output_dir, "err", filename)
-                with open(err_path, "w", encoding="utf-8") as out_f:
-                    out_f.write(result.stderr)
-                out_path = os.path.join(output_dir, "out", filename)
-                with open(out_path, "w", encoding="utf-8") as out_f:
-                    out_f.write(result.stdout)
+
+        if record:
+            err_path = os.path.join(output_dir, "err", filename)
+            with open(err_path, "w", encoding="utf-8") as out_f:
+                out_f.write(result.stderr)
+            out_path = os.path.join(output_dir, "out", filename)
+            with open(out_path, "w", encoding="utf-8") as out_f:
+                out_f.write(result.stdout)
 
         return (
             input_file,
@@ -221,10 +222,10 @@ def worker_process_file(args) -> tuple[str, float, float, str, str]:
         )
 
     except subprocess.TimeoutExpired as e:
+        with worker_lock:
+            worker_counter.value += 1
+            cnt = worker_counter.value
         if verbose:
-            with worker_lock:
-                worker_counter.value += 1
-                cnt = worker_counter.value
             cnt_str = " " * (len(str(total_files)) - len(str(cnt))) + str(cnt)
             s = "-" * KETA_SCORE
             t = f">{timeout:.3f} sec"

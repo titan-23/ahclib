@@ -25,7 +25,7 @@ def get_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "command",
-        choices=["setup", "vis", "test", "opt", "clear"],
+        choices=["setup", "vis", "vis_beam", "test", "opt", "clear"],
         help="",
     )
     parser.add_argument(
@@ -50,6 +50,18 @@ def get_args() -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
     )
     parser.add_argument(
+        "--history",
+        required=False,
+        default="history.json",
+        help="vis_beam で読み込む history.json のパス",
+    )
+    parser.add_argument(
+        "--vis",
+        required=False,
+        default=None,
+        help="vis_beam で使う visualizer.py のパス (省略時は ./visualizer.py を自動検出)",
+    )
+    parser.add_argument(
         "--wilcoxon",
         default=True,
         action=argparse.BooleanOptionalAction,
@@ -72,6 +84,21 @@ def main():
         from . import vis
 
         vis.app.run(debug=False)
+        sys.exit(0)
+
+    if args.command == "vis_beam":
+        from .beam.app import create_app
+        from .beam.default_visualizer import generate_board_visual as _default_vis
+
+        vis_path = args.vis or os.path.join(os.getcwd(), "visualizer.py")
+        if os.path.exists(vis_path):
+            vis_module = load_class_from_path(vis_path)
+            generate_board_visual = getattr(vis_module, "generate_board_visual", _default_vis)
+        else:
+            generate_board_visual = _default_vis
+
+        beam_app = create_app(generate_board_visual, history_path=args.history)
+        beam_app.run(debug=False)
         sys.exit(0)
 
     if args.command == "setup":

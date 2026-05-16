@@ -107,10 +107,12 @@ with open(os.path.join(ASSETS_PATH, "custom.css"), "w", encoding="utf-8") as f:
 
 
 def format_timestamp(ts):
-    try:
-        return datetime.strptime(ts, "%Y%m%d_%H%M").strftime("%Y/%m/%d %H:%M")
-    except:
-        return ts
+    for fmt in ("%Y-%m-%d_%H-%M-%S", "%Y%m%d_%H%M"):
+        try:
+            return datetime.strptime(ts, fmt).strftime("%Y/%m/%d %H:%M")
+        except ValueError:
+            continue
+    return ts
 
 
 _CSV_CACHE = {}
