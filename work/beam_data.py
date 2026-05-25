@@ -1,6 +1,177 @@
 import json
 import os
+import sys
 from collections import deque
+
+
+def compute_tree_layout(root_id, children_dict, nodes_dict, MIN_GAP=1.0, mutate_children_order=False):
+    """Reingold-Tilford 風のツリーレイアウトを計算する。
+    children_dict: parent_id -> 子IDのリスト
+    mutate_children_order=True の場合、children_dict の子順を最適化（重い枝を中央）して書き換える。
+    Returns: {node_id: x_position}
+
+    pass1 は反復化されており、各ノードの contour は (depth -> x) の dict ではなく
+    深さ毎の最小/最大値を持つ配列で管理する（小さいオフセットの contour は
+    親の contour に shift 加算して merge する代わりに、累積 shift で一括ずらしする）。
+    """
+    if mutate_children_order:
+        eff_children = children_dict
+    else:
+        eff_children = {pid: list(kids) for pid, kids in children_dict.items()}
+
+    # 反復で subtree_size と post-order の順序を計算
+    subtree_size = {}
+    post_order = []
+    stack = [(root_id, False)]
+    while stack:
+        nid, processed = stack.pop()
+        if processed:
+            kids = eff_children.get(nid, [])
+            subtree_size[nid] = 1 + sum(subtree_size.get(k, 1) for k in kids)
+            post_order.append(nid)
+        else:
+            stack.append((nid, True))
+            for k in eff_children.get(nid, []):
+                stack.append((k, False))
+
+    # 重い枝を中央に
+    for pid in list(eff_children.keys()):
+        kids = eff_children[pid]
+        if len(kids) <= 1:
+            continue
+        sorted_kids = sorted(kids, key=lambda k: subtree_size.get(k, 0), reverse=True)
+        arranged = deque()
+        for i, k in enumerate(sorted_kids):
+            if i % 2 == 0:
+                arranged.append(k)
+            else:
+                arranged.appendleft(k)
+        eff_children[pid] = list(arranged)
+
+    node_offsets = {}
+    # 各ノードの contour: (left_contour_dict, right_contour_dict) 形式の代わりに
+    # 深さ -> 値 の dict をそのまま持つ（merge は shift 加算で対応）
+    left_contours = {}
+    right_contours = {}
+
+    for nid in post_order:
+        kids = eff_children.get(nid, [])
+        depth = nodes_dict[nid]["turn"] if nid in nodes_dict else 0
+
+        if not kids:
+            node_offsets[nid] = 0.0
+            left_contours[nid] = {depth: 0.0}
+            right_contours[nid] = {depth: 0.0}
+            continue
+
+        # 最初の子の contour を借りる（後段で shift=0 として shift マップに記録）
+        first_child = kids[0]
+        merged_left = dict(left_contours[first_child])
+        merged_right = dict(right_contours[first_child])
+
+        kid_shifts = [0.0]
+
+        for i in range(1, len(kids)):
+            child = kids[i]
+            c_left = left_contours[child]
+            c_right = right_contours[child]
+
+            # shift 計算: 各深さで right(merged) - left(c) + MIN_GAP の最大値
+            shift = 0.0
+            if len(c_left) < len(merged_right):
+                small, large = c_left, merged_right
+                # 小さい方の dict をループ
+                for d, lv in small.items():
+                    rv = large.get(d)
+                    if rv is not None:
+                        req = rv - lv + MIN_GAP
+                        if req > shift:
+                            shift = req
+            else:
+                for d, rv in merged_right.items():
+                    lv = c_left.get(d)
+                    if lv is not None:
+                        req = rv - lv + MIN_GAP
+                        if req > shift:
+                            shift = req
+
+            kid_shifts.append(shift)
+
+            # contour 更新
+            for d, val in c_left.items():
+                shifted_val = val + shift
+                cur = merged_left.get(d)
+                if cur is None or shifted_val < cur:
+                    merged_left[d] = shifted_val
+
+            for d, val in c_right.items():
+                shifted_val = val + shift
+                cur = merged_right.get(d)
+                if cur is None or shifted_val > cur:
+                    merged_right[d] = shifted_val
+
+        # 子の不要 contour を解放（メモリ削減）
+        for child in kids:
+            left_contours.pop(child, None)
+            right_contours.pop(child, None)
+
+        parent_x = (kid_shifts[0] + kid_shifts[-1]) / 2.0
+
+        for i, child in enumerate(kids):
+            node_offsets[child] = kid_shifts[i] - parent_x
+
+        if parent_x != 0.0:
+            for d in merged_left:
+                merged_left[d] -= parent_x
+            for d in merged_right:
+                merged_right[d] -= parent_x
+
+        cur_l = merged_left.get(depth)
+        if cur_l is None or 0.0 < cur_l:
+            merged_left[depth] = 0.0
+        cur_r = merged_right.get(depth)
+        if cur_r is None or 0.0 > cur_r:
+            merged_right[depth] = 0.0
+
+        left_contours[nid] = merged_left
+        right_contours[nid] = merged_right
+
+    # contour を解放
+    left_contours.clear()
+    right_contours.clear()
+
+    positions = {}
+    pass2_stack = [(root_id, 0.0)]
+    while pass2_stack:
+        nid, current_x = pass2_stack.pop()
+        positions[nid] = current_x
+        for child in eff_children.get(nid, []):
+            child_x = current_x + node_offsets.get(child, 0.0)
+            pass2_stack.append((child, child_x))
+
+    return positions
+
+
+def compute_compact_layout(active_set, children_dict_full, nodes_dict, root_id="-1"):
+    """active_set に含まれるノードだけからなるサブツリーのレイアウトを計算。
+    children_dict_full は変更されない。active_set 起点で走査し O(|active_set|) で構築する。"""
+    sub_children = {}
+
+    root_kids = children_dict_full.get(root_id)
+    if root_kids:
+        filtered = [k for k in root_kids if k in active_set]
+        if filtered:
+            sub_children[root_id] = filtered
+
+    for pid in active_set:
+        kids = children_dict_full.get(pid)
+        if not kids:
+            continue
+        filtered = [k for k in kids if k in active_set]
+        if filtered:
+            sub_children[pid] = filtered
+
+    return compute_tree_layout(root_id, sub_children, nodes_dict, mutate_children_order=True)
 
 
 def load_and_process_data(filepath="history.json"):
@@ -182,102 +353,7 @@ def load_and_process_data(filepath="history.json"):
             stats["max"] = 0
             stats["mean"] = 0
 
-    # 1. 各ノードのサブツリーの大きさを事前計算
-    subtree_size = {}
-
-    def get_subtree_size(nid):
-        if nid in subtree_size:
-            return subtree_size[nid]
-        kids = children_dict.get(nid, [])
-        size = 1 + sum((get_subtree_size(k) for k in kids))
-        subtree_size[nid] = size
-        return size
-
-    get_subtree_size("-1")
-
-    # 2. 子ノードの順序を最適化（重い枝を中央、軽い枝を外側に配置）
-    for pdx, pid in enumerate(children_dict):
-        kids = children_dict[pid]
-        if not kids:
-            continue
-        kids.sort(key=lambda k: subtree_size.get(k, 0), reverse=True)
-        arranged = deque()
-        for i, k in enumerate(kids):
-            if i % 2 == 0:
-                arranged.append(k)
-            else:
-                arranged.appendleft(k)
-        children_dict[pid] = list(arranged)
-
-        MIN_GAP = 1.0
-
-        node_offsets = {}
-
-        def calculate_layout_pass1(nid):
-            kids = children_dict.get(nid, [])
-            depth = nodes_dict[nid]["turn"] if nid in nodes_dict else 0
-
-            if not kids:
-                node_offsets[nid] = 0.0
-                return {depth: 0.0}, {depth: 0.0}
-
-            c_left_0, c_right_0 = calculate_layout_pass1(kids[0])
-            left_contour = dict(c_left_0)
-            right_contour = dict(c_right_0)
-
-            kid_shifts = [0.0]
-
-            for i in range(1, len(kids)):
-                c_left, c_right = calculate_layout_pass1(kids[i])
-
-                shift = 0.0
-                for d in right_contour:
-                    if d in c_left:
-                        req = right_contour[d] - c_left[d] + MIN_GAP
-                        if req > shift:
-                            shift = req
-
-                kid_shifts.append(shift)
-
-                for d, val in c_left.items():
-                    shifted_val = val + shift
-                    if d not in left_contour or shifted_val < left_contour[d]:
-                        left_contour[d] = shifted_val
-
-                for d, val in c_right.items():
-                    shifted_val = val + shift
-                    if d not in right_contour or shifted_val > right_contour[d]:
-                        right_contour[d] = shifted_val
-
-            # 3. 親の位置は、「両端の子の中央」に配置（平均値による偏りを排除）
-            parent_x = (kid_shifts[0] + kid_shifts[-1]) / 2.0
-
-            for i, child in enumerate(kids):
-                node_offsets[child] = kid_shifts[i] - parent_x
-
-            left_contour = {d: v - parent_x for d, v in left_contour.items()}
-            right_contour = {d: v - parent_x for d, v in right_contour.items()}
-
-            if depth not in left_contour or 0.0 < left_contour[depth]:
-                left_contour[depth] = 0.0
-            if depth not in right_contour or 0.0 > right_contour[depth]:
-                right_contour[depth] = 0.0
-
-            return left_contour, right_contour
-
-    # パス1: ボトムアップで相対座標と輪郭を計算
-    calculate_layout_pass1("-1")
-
-    positions = {}
-
-    def calculate_layout_pass2(nid, current_x):
-        positions[nid] = current_x
-        for child in children_dict.get(nid, []):
-            child_x = current_x + node_offsets.get(child, 0.0)
-            calculate_layout_pass2(child, child_x)
-
-    # パス2: トップダウンで絶対座標を確定
-    calculate_layout_pass2("-1", 0.0)
+    positions = compute_tree_layout("-1", children_dict, nodes_dict, mutate_children_order=True)
 
     # 未配置ノードのフォールバック
     for nid in nodes_dict:

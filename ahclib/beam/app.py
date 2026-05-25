@@ -12,9 +12,9 @@ from .config import (
     tab_style,
     tab_selected_style,
 )
-from .data import load_and_process_data
+from .data import load_and_process_data, compute_compact_layout
 
-_DATA_CACHE = {"processed": {}}
+_DATA_CACHE = {"processed": {}, "compact_layout_cache": {}}
 _HISTORY_PATH = "history.json"
 _generate_board_visual = None
 _BOARD_CACHE: dict = {}
@@ -154,6 +154,7 @@ def create_app(generate_board_visual, history_path="history.json"):
                                         "value": "show_pruned",
                                     },
                                     {"label": " スコアヒートマップ", "value": "heatmap"},
+                                    {"label": " コンパクト", "value": "compact"},
                                 ],
                                 value=[],
                                 style={"fontSize": "13px"},
@@ -512,6 +513,7 @@ def create_app(generate_board_visual, history_path="history.json"):
         global _DATA_CACHE
         processed, max_t, marks = load_and_process_data(_HISTORY_PATH)
         _DATA_CACHE["processed"] = processed
+        _DATA_CACHE["compact_layout_cache"] = {}
         return {"ts": time.time()}, max_t, None
 
     @app.callback(
@@ -589,6 +591,7 @@ def create_app(generate_board_visual, history_path="history.json"):
             return [], dash.no_update
 
         nodes_dict = processed.get("nodes_dict", {})
+        children_dict = processed.get("children_dict", {})
         snapshots_dict = processed.get("snapshots_dict", {})
         turn_stats = processed.get("turn_stats", {})
         base_positions = processed.get("base_positions", {})
@@ -619,6 +622,28 @@ def create_app(generate_board_visual, history_path="history.json"):
             curr = next_nodes
         active_path.add("-1")
 
+        compact_mode = "compact" in visibility
+        positions_map = base_positions
+        if compact_mode and active_path:
+            cache = _DATA_CACHE.setdefault("compact_layout_cache", {})
+            cache_key = valid_max_t
+            compact_positions = cache.get(cache_key)
+            if compact_positions is None:
+                raw_pos = compute_compact_layout(
+                    active_path, children_dict, nodes_dict, root_id="-1"
+                )
+                compact_positions = {}
+                for nid, x in raw_pos.items():
+                    if nid == "-1":
+                        depth = 0
+                    elif nid in nodes_dict:
+                        depth = nodes_dict[nid]["turn"]
+                    else:
+                        depth = 0
+                    compact_positions[nid] = {"depth": depth, "breadth_center": x}
+                cache[cache_key] = compact_positions
+            positions_map = compact_positions
+
         collapsed_set = set(collapsed_ids)
         is_ancestor_collapsed = {"-1": False}
         for n in processed.get("nodes_sorted", nodes):
@@ -628,7 +653,7 @@ def create_app(generate_board_visual, history_path="history.json"):
                 pid in collapsed_set
             ) or is_ancestor_collapsed.get(pid, False)
 
-        show_pruned = "show_pruned" in visibility
+        show_pruned = "show_pruned" in visibility and not compact_mode
         use_heatmap = "heatmap" in visibility
 
         def get_heatmap_color(score, turn):
@@ -649,7 +674,7 @@ def create_app(generate_board_visual, history_path="history.json"):
             depth_gap = 300
             breadth_gap = 60
 
-        pos_start = base_positions.get("-1", {"depth": 0, "breadth_center": 0.0})
+        pos_start = positions_map.get("-1", {"depth": 0, "breadth_center": 0.0})
         start_x = (
             pos_start["breadth_center"] * breadth_gap
             if tree_direction == "TB"
@@ -723,7 +748,7 @@ def create_app(generate_board_visual, history_path="history.json"):
                 "classes": cls,
             }
 
-            pos = base_positions.get(nid, {"depth": 0, "breadth_center": 0.0})
+            pos = positions_map.get(nid, {"depth": 0, "breadth_center": 0.0})
             if tree_direction == "TB":
                 element["position"] = {
                     "x": pos["breadth_center"] * breadth_gap,

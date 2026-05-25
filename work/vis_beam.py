@@ -11,14 +11,14 @@ from beam_config import (
     tab_selected_style,
     generate_assets,
 )
-from beam_data import load_and_process_data
+from beam_data import load_and_process_data, compute_compact_layout
 from visualizer import generate_board_visual
 import time
 
 cyto.load_extra_layouts()
 generate_assets()
 
-_DATA_CACHE = {"processed": {}}
+_DATA_CACHE = {"processed": {}, "compact_layout_cache": {}}
 
 app = dash.Dash(__name__, update_title=None, suppress_callback_exceptions=True)
 
@@ -139,6 +139,7 @@ app.layout = html.Div(
                                     "value": "show_pruned",
                                 },
                                 {"label": " スコアヒートマップ", "value": "heatmap"},
+                                {"label": " コンパクト", "value": "compact"},
                             ],
                             value=[],
                             style={"fontSize": "13px"},
@@ -502,6 +503,7 @@ def load_data(n_clicks, _):
     global _DATA_CACHE
     processed, max_t, marks = load_and_process_data("history.json")
     _DATA_CACHE["processed"] = processed
+    _DATA_CACHE["compact_layout_cache"] = {}
     return {"ts": time.time()}, max_t, None
 
 
@@ -581,6 +583,7 @@ def update_elements(
         return [], dash.no_update
 
     nodes_dict = processed.get("nodes_dict", {})
+    children_dict = processed.get("children_dict", {})
     snapshots_dict = processed.get("snapshots_dict", {})
     turn_stats = processed.get("turn_stats", {})
     base_positions = processed.get("base_positions", {})
@@ -611,6 +614,28 @@ def update_elements(
         curr = next_nodes
     active_path.add("-1")
 
+    compact_mode = "compact" in visibility
+    positions_map = base_positions
+    if compact_mode and active_path:
+        cache = _DATA_CACHE.setdefault("compact_layout_cache", {})
+        cache_key = valid_max_t
+        compact_positions = cache.get(cache_key)
+        if compact_positions is None:
+            raw_pos = compute_compact_layout(
+                active_path, children_dict, nodes_dict, root_id="-1"
+            )
+            compact_positions = {}
+            for nid, x in raw_pos.items():
+                if nid == "-1":
+                    depth = 0
+                elif nid in nodes_dict:
+                    depth = nodes_dict[nid]["turn"]
+                else:
+                    depth = 0
+                compact_positions[nid] = {"depth": depth, "breadth_center": x}
+            cache[cache_key] = compact_positions
+        positions_map = compact_positions
+
     collapsed_set = set(collapsed_ids)
     is_ancestor_collapsed = {"-1": False}
     for n in sorted(nodes, key=lambda x: x.get("turn", 0)):
@@ -620,7 +645,7 @@ def update_elements(
             pid in collapsed_set
         ) or is_ancestor_collapsed.get(pid, False)
 
-    show_pruned = "show_pruned" in visibility
+    show_pruned = "show_pruned" in visibility and not compact_mode
     use_heatmap = "heatmap" in visibility
 
     def get_heatmap_color(score, turn):
@@ -641,7 +666,7 @@ def update_elements(
         depth_gap = 300
         breadth_gap = 60
 
-    pos_start = base_positions.get("-1", {"depth": 0, "breadth_center": 0.0})
+    pos_start = positions_map.get("-1", {"depth": 0, "breadth_center": 0.0})
     start_x = (
         pos_start["breadth_center"] * breadth_gap
         if tree_direction == "TB"
@@ -715,7 +740,7 @@ def update_elements(
             "classes": cls,
         }
 
-        pos = base_positions.get(nid, {"depth": 0, "breadth_center": 0.0})
+        pos = positions_map.get(nid, {"depth": 0, "breadth_center": 0.0})
         if tree_direction == "TB":
             element["position"] = {
                 "x": pos["breadth_center"] * breadth_gap,
