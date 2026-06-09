@@ -38,6 +38,8 @@ class AHCSettings:
 
     # optuna の試行回数
     n_trials = 50
+    # optuna の実行時間制限 [min]
+    optuna_timeout = None
 
     # optuna の cpu_count
     # HINT: wilcoxonで枝刈りが行われるので、njobsをある程度小さくしてnjobs_optunaを数個にするとよさそう

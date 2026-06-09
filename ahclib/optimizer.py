@@ -3,8 +3,10 @@ import time
 from typing import Optional, Callable
 from logging import getLogger, basicConfig
 import os
+import re
 import subprocess
 import multiprocessing
+import psycopg2
 from .parallel_tester import ParallelTester, build_tester
 from .ahc_settings import AHCSettings
 from .ahc_util import to_blue, to_bold, to_green
@@ -15,12 +17,46 @@ logger = getLogger(__name__)
 
 class Optimizer:
 
+    POSTGRES_DB_PREFIX = "ahclib_optuna_"
+    POSTGRES_MAINTENANCE_DB = "postgres"
+
     def __init__(self, settings: AHCSettings) -> None:
         self.settings: AHCSettings = settings
         self.study_name = settings.study_name
         self.path = f"./ahclib_results/optimizer_results"
         if not os.path.exists(self.path):
             os.makedirs(self.path)
+
+    def _postgres_db_name(self) -> str:
+        normalized = re.sub(r"[^a-z0-9_]+", "_", self.study_name.lower()).strip("_")
+        if not normalized:
+            normalized = "study"
+        return f"{self.POSTGRES_DB_PREFIX}{normalized}"
+
+    @staticmethod
+    def _quote_postgres_identifier(identifier: str) -> str:
+        return '"' + identifier.replace('"', '""') + '"'
+
+    def _ensure_postgres_database(self, db_name: str) -> None:
+        conn = psycopg2.connect(dbname=self.POSTGRES_MAINTENANCE_DB)
+        conn.autocommit = True
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM pg_database WHERE datname = %s",
+                    (db_name,),
+                )
+                if cur.fetchone() is None:
+                    cur.execute(
+                        f"CREATE DATABASE {self._quote_postgres_identifier(db_name)}"
+                    )
+        finally:
+            conn.close()
+
+    def _build_storage_url(self) -> str:
+        db_name = self._postgres_db_name()
+        self._ensure_postgres_database(db_name)
+        return f"postgresql+psycopg2:///{db_name}"
 
     def optimize(
         self, sampler: Optional[str] = None, pruner: Optional[str] = None
@@ -30,6 +66,11 @@ class Optimizer:
         logger.info(f"- study_name    : {to_bold(self.settings.study_name)}")
         logger.info(f"- direction     : {to_bold(self.settings.direction)}")
         logger.info(f"- n_trials      : {to_bold(self.settings.n_trials)}")
+        optuna_timeout_min = getattr(self.settings, "optuna_timeout", None)
+        optuna_timeout = (
+            optuna_timeout_min * 60 if optuna_timeout_min is not None else None
+        )
+        logger.info(f"- timeout [min] : {to_bold(optuna_timeout_min)}")
 
         start = time.time()
 
@@ -65,9 +106,11 @@ class Optimizer:
             score = tester.get_score(scores)
             return score
 
-        db_path = os.path.join(self.path, "optuna-journal.log")
-        storage = optuna.storages.JournalStorage(
-            optuna.storages.JournalFileBackend(db_path)
+        storage_url = self._build_storage_url()
+        storage = optuna.storages.RDBStorage(
+            url=storage_url,
+            heartbeat_interval=60,
+            grace_period=120,
         )
         _objective_func: Callable[[optuna.trial.Trial], float] = _objective
 
@@ -104,7 +147,7 @@ class Optimizer:
         try:
             logger.info(f"------------------------------------------")
             process = subprocess.Popen(
-                ["optuna-dashboard", db_path],
+                ["optuna-dashboard", storage_url],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -132,6 +175,7 @@ class Optimizer:
             study.optimize(
                 _objective_func,
                 n_trials=self.settings.n_trials,
+                timeout=optuna_timeout,
                 n_jobs=min(self.settings.njobs_optuna, multiprocessing.cpu_count() - 1),
             )
 
@@ -143,8 +187,8 @@ class Optimizer:
             )
             input(to_bold(to_blue("Press Enter to close the dashboard and exit...")))
 
-        except Exception as e:
-            logger.error(e)
+        except Exception:
+            logger.exception("Optimizer failed.")
             exit(1)
         finally:
             if "process" in locals():

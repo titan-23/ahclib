@@ -101,13 +101,26 @@ Optuna を用いたパラメータ探索用の設定
 
 * ``study_name``
 
-  - ``study_name`` が既にある場合、そのデータベースが利用される
+  - ``study_name`` から PostgreSQL のデータベース名が自動生成される
+  - 例: ``study_name = "test"`` なら ``ahclib_optuna_test``
+  - 既に同名の study がある場合、その study が利用される
+
+* PostgreSQL storage
+
+  - ローカル PostgreSQL を利用する
+  - optimizer 実行時に study 用データベースが存在しなければ自動作成される
+  - 現在の OS ユーザーが ``postgres`` データベースへ接続でき、データベース作成権限を持つ必要がある
 
 * ``direction``
 
   - ``minimize`` か ``maximize``
 
 * optuna の試行回数 (``n_trials``)
+
+* optuna の実行時間制限 minutes (``optuna_timeout``)
+
+  - ``None`` の場合は時間制限なし
+  - ``n_trials`` と ``optuna_timeout`` のどちらか先に到達した時点で終了する
 
 * optuna のスレッド数 (``n_jobs_optuna``)
 
@@ -127,6 +140,7 @@ Optuna を用いたパラメータ探索用の設定
   study_name = "test"
   direction = "minimize"
   n_trials = 50
+  optuna_timeout = None  # 例: 60 なら 1 時間
   n_jobs_optuna = 1
 
   def objective(trial: optuna.trial.Trial) -> tuple:

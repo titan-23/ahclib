@@ -3,6 +3,7 @@ setuptools>=78.0.2
 optuna>=4.2.1
 optunahub>=0.2.0
 optuna-dashboard>=0.17.0
+psycopg2-binary>=2.9.9
 cmaes>=0.11.1
 torch>=2.6.0
 plotly>=6.0.1

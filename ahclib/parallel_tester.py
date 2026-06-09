@@ -1,5 +1,6 @@
 from typing import Iterable, Callable, Optional
 import argparse
+import concurrent.futures
 from logging import getLogger, basicConfig
 import subprocess
 import multiprocessing
@@ -9,6 +10,8 @@ import os
 from random import Random
 import shutil
 import csv
+import threading
+from types import SimpleNamespace
 import optuna
 import datetime
 import pandas as pd
@@ -172,9 +175,13 @@ def worker_process_file(args) -> tuple[str, float, float, str, str]:
                             else (ave_rel > 1.0)
                         )
                         now_ave_rel_str = (
-                            to_green(f"{ave_rel:.4f}")
-                            if is_good_ave
-                            else to_red(f"{ave_rel:.4f}")
+                            f"{ave_rel:.4f}"
+                            if ave_rel == 1.0
+                            else (
+                                to_green(f"{ave_rel:.4f}")
+                                if is_good_ave
+                                else to_red(f"{ave_rel:.4f}")
+                            )
                         )
                     else:
                         now_ave_rel_str = to_red("nan")
@@ -196,9 +203,13 @@ def worker_process_file(args) -> tuple[str, float, float, str, str]:
                     else (relative_score > 1.0)
                 )
                 u = (
-                    to_green(f"{relative_score:.3f}")
-                    if is_good
-                    else to_red(f"{relative_score:.3f}")
+                    f"{relative_score:.3f}"
+                    if relative_score == 1.0
+                    else (
+                        to_green(f"{relative_score:.3f}")
+                        if is_good
+                        else to_red(f"{relative_score:.3f}")
+                    )
                 )
                 log_parts.extend([u, f"Ave: {ave_s}", f"RelAve: {now_ave_rel_str}"])
             else:
@@ -369,17 +380,37 @@ class ParallelTester:
             for id_, file in input_filenames
         ]
 
-        with multiprocessing.Pool(processes=self.cpu_count) as pool:
-            result_iterator = pool.imap_unordered(
-                worker_process_file_opt_wilcoxon,
-                args_list,
-                chunksize=1,
-            )
-            for id_, score in result_iterator:
-                trial.report(score, id_)
-                scores_list[id_] = score
-                if trial.should_prune():
+        max_workers = max(1, self.cpu_count)
+        args_iter = iter(args_list)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {}
+            for _ in range(max_workers):
+                try:
+                    args = next(args_iter)
+                except StopIteration:
                     break
+                futures[executor.submit(worker_process_file_opt_wilcoxon, args)] = args
+
+            while futures:
+                done, _ = concurrent.futures.wait(
+                    futures, return_when=concurrent.futures.FIRST_COMPLETED
+                )
+                for future in done:
+                    futures.pop(future)
+                    id_, score = future.result()
+                    trial.report(score, id_)
+                    scores_list[id_] = score
+                    if trial.should_prune():
+                        for pending in futures:
+                            pending.cancel()
+                        return scores_list
+                    try:
+                        args = next(args_iter)
+                    except StopIteration:
+                        continue
+                    futures[executor.submit(worker_process_file_opt_wilcoxon, args)] = (
+                        args
+                    )
         return scores_list
 
     def run(self) -> list[float]:
@@ -390,8 +421,9 @@ class ParallelTester:
             for file in self.input_file_names
         ]
 
-        with multiprocessing.Pool(processes=self.cpu_count) as pool:
-            result = pool.map(worker_process_file_light, args_list, chunksize=1)
+        max_workers = max(1, self.cpu_count)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            result = list(executor.map(worker_process_file_light, args_list))
 
         return result
 
@@ -444,24 +476,17 @@ class ParallelTester:
             for file in self.input_file_names
         ]
 
-        with multiprocessing.Manager() as manager:
-            lock = manager.Lock()
-            counter = manager.Value("i", 0)
-            score_sum = manager.Value("d", 0.0)
-            valid_cnt = manager.Value("i", 0)
-            rel_log_sum = manager.Value("d", 0.0)
-            rel_cnt = manager.Value("i", 0)
-
-            with multiprocessing.Pool(
-                processes=self.cpu_count,
-                initializer=init_worker,
-                initargs=(lock, counter, score_sum, valid_cnt, rel_log_sum, rel_cnt),
-            ) as pool:
-                result = pool.map(
-                    worker_process_file,
-                    args_list,
-                    chunksize=1,
-                )
+        init_worker(
+            threading.Lock(),
+            SimpleNamespace(value=0),
+            SimpleNamespace(value=0.0),
+            SimpleNamespace(value=0),
+            SimpleNamespace(value=0.0),
+            SimpleNamespace(value=0),
+        )
+        max_workers = max(1, self.cpu_count)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            result = list(executor.map(worker_process_file, args_list))
 
         # csv
         result.sort()
@@ -591,7 +616,7 @@ def run_test(
                 to_red(f"RelativeScore::ErrorCount: {relative_scores.count(-1)}.")
             )
         relative_scores = list(filter(lambda x: not math.isnan(x), relative_scores))
-        less_cnt, uppe_cnt = 0, 0
+        less_cnt, same_cnt, uppe_cnt = 0, 0, 0
         log_sum = 0
         for r in relative_scores:
             if r == -1:
@@ -599,21 +624,31 @@ def run_test(
             log_sum += math.log(r)
             if r < 1.0:
                 less_cnt += 1
+            elif r == 1.0:
+                same_cnt += 1
             else:
                 uppe_cnt += 1
-        if less_cnt + uppe_cnt != 0:
-            ave_relative_score = math.exp(log_sum / (less_cnt + uppe_cnt))
+        if less_cnt + same_cnt + uppe_cnt != 0:
+            ave_relative_score = math.exp(log_sum / (less_cnt + same_cnt + uppe_cnt))
             if settings.direction == "minimize":
                 ave_relative_score = (
-                    to_green(f"{ave_relative_score:.4f}")
-                    if ave_relative_score < 1
-                    else to_red(f"{ave_relative_score:.4f}")
+                    f"{ave_relative_score:.4f}"
+                    if ave_relative_score == 1
+                    else (
+                        to_green(f"{ave_relative_score:.4f}")
+                        if ave_relative_score < 1
+                        else to_red(f"{ave_relative_score:.4f}")
+                    )
                 )
             else:
                 ave_relative_score = (
-                    to_green(f"{ave_relative_score:.4f}")
-                    if ave_relative_score > 1
-                    else to_red(f"{ave_relative_score:.4f}")
+                    f"{ave_relative_score:.4f}"
+                    if ave_relative_score == 1
+                    else (
+                        to_green(f"{ave_relative_score:.4f}")
+                        if ave_relative_score > 1
+                        else to_red(f"{ave_relative_score:.4f}")
+                    )
                 )
         else:
             ave_relative_score = to_red("nan")
@@ -625,6 +660,7 @@ def run_test(
             to_red(uppe_cnt) if settings.direction == "minimize" else to_green(uppe_cnt)
         )
         logger.info(f"LESS : {less_cnt}.")
+        logger.info(f"SAME : {same_cnt}.")
         logger.info(f"UPPER: {uppe_cnt}.")
         logger.info(f"RelativeScore: {ave_relative_score}.")
 
