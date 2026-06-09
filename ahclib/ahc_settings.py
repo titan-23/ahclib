@@ -1,11 +1,11 @@
 import optuna
 import sys
-from typing import Optional, Callable
+from typing import Optional
 from ahclib.ahc_util import avg_score, geo_score, to_red
 
 """example
 python3 -m ahclib test
-python3 -m opt
+python3 -m opt  # デフォルトで WilcoxonPruner を採用
 """
 
 
@@ -15,6 +15,7 @@ class AHCSettings:
     direction = "maximize"  # minimize / maximize
     njobs = 100
     timeout = None
+    is_int: bool = True # スコアが整数なら True 小数なら False
 
     filename = "./main.cpp"
     compile_command = f"g++ {filename} -O2 -DLOCAL -std=c++20 -o a.out -fopenmp -I. -I./../../Library_cpp -march=native"
@@ -35,6 +36,7 @@ class AHCSettings:
     # optimizer -------------------------- #
     # study_name
     study_name = "test"
+    optuna_seed: Optional[int] = 23
 
     # optuna の試行回数
     n_trials = 50
@@ -57,7 +59,7 @@ class AHCSettings:
         # {"start_temp": 1000.0, "k": 0.01},
     ]
 
-    # (TPE)ランダムに探索する試行回数を指定する
+    # ランダムに探索する試行回数を指定する
     optuna_n_startup_trials = 10  # デフォルト
 
     # visualize -------------------------- #

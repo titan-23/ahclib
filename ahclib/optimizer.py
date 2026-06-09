@@ -66,7 +66,7 @@ class Optimizer:
         logger.info(f"- study_name    : {to_bold(self.settings.study_name)}")
         logger.info(f"- direction     : {to_bold(self.settings.direction)}")
         logger.info(f"- n_trials      : {to_bold(self.settings.n_trials)}")
-        optuna_timeout_min = getattr(self.settings, "optuna_timeout", None)
+        optuna_timeout_min = self.settings.optuna_timeout
         optuna_timeout = (
             optuna_timeout_min * 60 if optuna_timeout_min is not None else None
         )
@@ -94,7 +94,7 @@ class Optimizer:
             )
             args = self.settings.objective(trial)
             tester.append_execute_command(args)
-            scores = tester.run_opt_wilcoxon(trial)
+            scores = tester.run_opt_pruner(trial)
             if None in scores:
                 tried_cnt = len(scores) - scores.count(None)
                 logger.info(
@@ -114,15 +114,17 @@ class Optimizer:
         )
         _objective_func: Callable[[optuna.trial.Trial], float] = _objective
 
+        optuna_seed = self.settings.optuna_seed
         if sampler == "auto_sampler":
             optuna_sampler = optunahub.load_module(
                 "samplers/auto_sampler"
-            ).AutoSampler()
+            ).AutoSampler(seed=optuna_seed)
         else:
             sampler = "TPESampler"
             optuna_sampler = optuna.samplers.TPESampler(
                 multivariate=True,
                 n_startup_trials=self.settings.optuna_n_startup_trials,
+                seed=optuna_seed,
             )
         logger.info(f"- sampler       : {to_bold(sampler)}")
 
