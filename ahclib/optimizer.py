@@ -116,9 +116,9 @@ class Optimizer:
 
         optuna_seed = self.settings.optuna_seed
         if sampler == "auto_sampler":
-            optuna_sampler = optunahub.load_module(
-                "samplers/auto_sampler"
-            ).AutoSampler(seed=optuna_seed)
+            optuna_sampler = optunahub.load_module("samplers/auto_sampler").AutoSampler(
+                seed=optuna_seed
+            )
         else:
             sampler = "TPESampler"
             optuna_sampler = optuna.samplers.TPESampler(

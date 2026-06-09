@@ -1447,7 +1447,9 @@ def update_graph(
         # ケースごとにCV（標準偏差÷平均）を算出
         cv_df = (
             df_cv.groupby("test_id")["score"]
-            .agg(cv=lambda x: x.std() / x.mean() if x.mean() != 0 and len(x) > 1 else 0.0)
+            .agg(
+                cv=lambda x: x.std() / x.mean() if x.mean() != 0 and len(x) > 1 else 0.0
+            )
             .reset_index()
         )
 
@@ -1467,7 +1469,10 @@ def update_graph(
                     merged,
                     x=param_col,
                     y="cv",
-                    labels={param_col: f"Parameter: {param_col}", "cv": "CV (std/mean)"},
+                    labels={
+                        param_col: f"Parameter: {param_col}",
+                        "cv": "CV (std/mean)",
+                    },
                     category_orders={param_col: sorted(merged[param_col].unique())},
                 )
                 fig.update_traces(marker_color="#29b6f6")
@@ -1475,22 +1480,30 @@ def update_graph(
             else:  # difficulty_heatmap
                 param_col_y = param_y
                 if param_col_y not in meta_df.columns:
-                    fig = px.scatter(title="（Y軸パラメータ情報を取得できませんでした）")
+                    fig = px.scatter(
+                        title="（Y軸パラメータ情報を取得できませんでした）"
+                    )
                     fig.update_layout(paper_bgcolor="#1e1e1e", plot_bgcolor="#1e1e1e")
                 else:
-                    merged[param_col_y] = pd.to_numeric(merged[param_col_y], errors="coerce")
+                    merged[param_col_y] = pd.to_numeric(
+                        merged[param_col_y], errors="coerce"
+                    )
                     merged = merged.dropna(subset=[param_col_y])
                     avg_cv = (
                         merged.groupby([param_col_y, param_col])["cv"]
                         .mean()
                         .reset_index()
                     )
-                    pivot_df = avg_cv.pivot(index=param_col_y, columns=param_col, values="cv")
+                    pivot_df = avg_cv.pivot(
+                        index=param_col_y, columns=param_col, values="cv"
+                    )
                     pivot_df = pivot_df.sort_index().sort_index(axis=1).astype(float)
 
                     fig = px.imshow(
                         pivot_df.values,
-                        labels=dict(x=f"{param_col}", y=f"{param_col_y}", color="CV Mean"),
+                        labels=dict(
+                            x=f"{param_col}", y=f"{param_col_y}", color="CV Mean"
+                        ),
                         x=[str(x) for x in pivot_df.columns],
                         y=[str(y) for y in pivot_df.index],
                         aspect="auto",

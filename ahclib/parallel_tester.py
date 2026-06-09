@@ -484,9 +484,7 @@ class ParallelTester:
         )
         self.use_relative_score = use_relative_score
         self.is_int = is_int
-        pre_csv = os.path.join(
-            RESULTS_DIR, ALL_TESTS_SUBDIR, pre_dir_name, RESULT_CSV
-        )
+        pre_csv = os.path.join(RESULTS_DIR, ALL_TESTS_SUBDIR, pre_dir_name, RESULT_CSV)
         self.pre_data: dict[str, float] = {}
         if os.path.exists(pre_csv):
             df = pd.read_csv(pre_csv)

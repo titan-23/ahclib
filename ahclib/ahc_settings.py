@@ -15,7 +15,7 @@ class AHCSettings:
     direction = "maximize"  # minimize / maximize
     njobs = 100
     timeout = None
-    is_int: bool = True # スコアが整数なら True 小数なら False
+    is_int: bool = True  # スコアが整数なら True 小数なら False
 
     filename = "./main.cpp"
     compile_command = f"g++ {filename} -O2 -DLOCAL -std=c++20 -o a.out -fopenmp -I. -I./../../Library_cpp -march=native"
