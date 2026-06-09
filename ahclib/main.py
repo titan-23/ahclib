@@ -93,7 +93,9 @@ def main():
         vis_path = args.vis or os.path.join(os.getcwd(), "visualizer.py")
         if os.path.exists(vis_path):
             vis_module = load_class_from_path(vis_path)
-            generate_board_visual = getattr(vis_module, "generate_board_visual", _default_vis)
+            generate_board_visual = getattr(
+                vis_module, "generate_board_visual", _default_vis
+            )
         else:
             generate_board_visual = _default_vis
 

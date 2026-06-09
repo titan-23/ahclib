@@ -30,17 +30,35 @@ worker_score_sum = None
 worker_valid_cnt = None
 worker_rel_log_sum = None
 worker_rel_cnt = None
+worker_rel_good_cnt = None
+worker_rel_same_cnt = None
+worker_rel_bad_cnt = None
 
 
-def init_worker(lock, counter, score_sum, valid_cnt, rel_log_sum, rel_cnt):
+def init_worker(
+    lock,
+    counter,
+    score_sum,
+    valid_cnt,
+    rel_log_sum,
+    rel_cnt,
+    rel_good_cnt,
+    rel_same_cnt,
+    rel_bad_cnt,
+):
     """各ワーカープロセスの初期化時に呼ばれ、LockとCounterをセットします。"""
-    global worker_lock, worker_counter, worker_score_sum, worker_valid_cnt, worker_rel_log_sum, worker_rel_cnt
+    global worker_lock, worker_counter, worker_score_sum, worker_valid_cnt
+    global worker_rel_log_sum, worker_rel_cnt
+    global worker_rel_good_cnt, worker_rel_same_cnt, worker_rel_bad_cnt
     worker_lock = lock
     worker_counter = counter
     worker_score_sum = score_sum
     worker_valid_cnt = valid_cnt
     worker_rel_log_sum = rel_log_sum
     worker_rel_cnt = rel_cnt
+    worker_rel_good_cnt = rel_good_cnt
+    worker_rel_same_cnt = rel_same_cnt
+    worker_rel_bad_cnt = rel_bad_cnt
 
 
 def worker_process_file_opt_wilcoxon(args) -> tuple[int, float]:
@@ -162,11 +180,31 @@ def worker_process_file(args) -> tuple[str, float, float, str, str]:
                     worker_score_sum.value / now_valid_cnt if now_valid_cnt > 0 else 0.0
                 )
                 now_ave_rel_str = ""
+                rel_cnt_str = ""
                 if use_relative_score:
                     if not math.isnan(relative_score) and relative_score != -1:
                         worker_rel_log_sum.value += math.log(relative_score)
                         worker_rel_cnt.value += 1
+                        if relative_score == 1.0:
+                            worker_rel_same_cnt.value += 1
+                        else:
+                            is_good_rel = (
+                                (relative_score < 1.0)
+                                if direction == "minimize"
+                                else (relative_score > 1.0)
+                            )
+                            if is_good_rel:
+                                worker_rel_good_cnt.value += 1
+                            else:
+                                worker_rel_bad_cnt.value += 1
                     now_rel_cnt = worker_rel_cnt.value
+                    rel_cnt_keta = len(str(total_files))
+                    good_cnt = f"{worker_rel_good_cnt.value:>{rel_cnt_keta}}"
+                    same_cnt = f"{worker_rel_same_cnt.value:>{rel_cnt_keta}}"
+                    bad_cnt = f"{worker_rel_bad_cnt.value:>{rel_cnt_keta}}"
+                    rel_cnt_str = (
+                        f"{to_green(good_cnt)} / {same_cnt} / {to_red(bad_cnt)}"
+                    )
                     if now_rel_cnt > 0:
                         ave_rel = math.exp(worker_rel_log_sum.value / now_rel_cnt)
                         is_good_ave = (
@@ -197,21 +235,25 @@ def worker_process_file(args) -> tuple[str, float, float, str, str]:
             ave_s = f"{now_ave_score:>{KETA_SCORE}.3f}"
             log_parts = [f"{cnt_str} / {total_files}", input_file, s, t]
             if use_relative_score:
-                is_good = (
-                    (relative_score < 1.0)
-                    if direction == "minimize"
-                    else (relative_score > 1.0)
-                )
-                u = (
-                    f"{relative_score:.3f}"
-                    if relative_score == 1.0
-                    else (
-                        to_green(f"{relative_score:.3f}")
-                        if is_good
-                        else to_red(f"{relative_score:.3f}")
+                if relative_score == -1:
+                    u = to_red(f"{relative_score:.3f}")
+                else:
+                    is_good = (
+                        (relative_score < 1.0)
+                        if direction == "minimize"
+                        else (relative_score > 1.0)
                     )
-                )
+                    u = (
+                        f"{relative_score:.3f}"
+                        if relative_score == 1.0
+                        else (
+                            to_green(f"{relative_score:.3f}")
+                            if is_good
+                            else to_red(f"{relative_score:.3f}")
+                        )
+                    )
                 log_parts.extend([u, f"Ave: {ave_s}", f"RelAve: {now_ave_rel_str}"])
+                log_parts.append(f"Better/Same/Worse: {rel_cnt_str}")
             else:
                 log_parts.append(f"Ave: {ave_s}")
             logger.info(f"| {' | '.join(log_parts)} |")
@@ -482,6 +524,9 @@ class ParallelTester:
             SimpleNamespace(value=0.0),
             SimpleNamespace(value=0),
             SimpleNamespace(value=0.0),
+            SimpleNamespace(value=0),
+            SimpleNamespace(value=0),
+            SimpleNamespace(value=0),
             SimpleNamespace(value=0),
         )
         max_workers = max(1, self.cpu_count)
