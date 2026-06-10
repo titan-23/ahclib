@@ -50,6 +50,13 @@ def get_args() -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
     )
     parser.add_argument(
+        "-m",
+        "--memo",
+        required=False,
+        default=None,
+        help="test の実行結果に添えるメモ (結果ディレクトリの memo.txt に保存され vis に表示される)",
+    )
+    parser.add_argument(
         "--history",
         required=False,
         default="history.json",
@@ -143,7 +150,14 @@ def main():
             datefmt="%H:%M:%S",
             level=os.getenv("LOG_LEVEL", "INFO"),
         )
-        run_test(settings, settings.njobs, args.verbose, args.compile, args.record)
+        run_test(
+            settings,
+            settings.njobs,
+            args.verbose,
+            args.compile,
+            args.record,
+            args.memo,
+        )
     elif args.command == "opt":
         sampler = None
         pruner = None

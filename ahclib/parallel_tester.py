@@ -668,9 +668,14 @@ class ParallelTester:
             elif os.path.isdir(src_path):
                 shutil.copytree(src_path, dest_path)
 
-    def run_record(self, record: bool) -> list[CaseResult]:
+    def run_record(self, record: bool, memo: Optional[str] = None) -> list[CaseResult]:
         """全ケースを並列実行し CSV と (record=True なら) 入出力ファイルも保存する"""
         output_dir = self._setup_output_dir(record)
+        if memo:
+            with open(
+                os.path.join(output_dir, "memo.txt"), "w", encoding="utf-8"
+            ) as f:
+                f.write(memo)
 
         formatter = _LogFormatter(
             direction=self.direction,
@@ -835,6 +840,7 @@ def run_test(
     verbose: bool = False,
     compile: bool = False,
     record: bool = True,
+    memo: Optional[str] = None,
 ) -> float:
     basicConfig(
         format="%(asctime)s [%(levelname)s] : %(message)s",
@@ -859,7 +865,7 @@ def run_test(
 
     start = time.time()
 
-    scores = tester.run_record(record)
+    scores = tester.run_record(record, memo)
 
     if settings.use_relative_score:
         _log_relative_score_summary(scores, settings.direction)

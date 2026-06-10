@@ -12,8 +12,6 @@ from datetime import datetime
 from dash import Dash, dcc, html, dash_table, ctx
 from dash.dependencies import Input, Output, State
 
-from .vis_runner import task_manager
-
 BASE_PATH = "ahclib_results/all_tests"
 FILE_NAME = "result.csv"
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -54,9 +52,9 @@ input[type="radio"], input[type="checkbox"] { accent-color: #29b6f6; cursor: poi
     display: flex; flex-direction: column; z-index: 1000;
     transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
-.sidebar-pinned { position: relative; width: 440px; min-width: 440px; transform: translateX(0); }
+.sidebar-pinned { position: relative; width: 520px; min-width: 520px; transform: translateX(0); }
 .sidebar-unpinned {
-    position: absolute; left: 0; top: 0; width: 440px; transform: translateX(-425px);
+    position: absolute; left: 0; top: 0; width: 520px; transform: translateX(-505px);
     box-shadow: 2px 0 5px rgba(0,0,0,0.5);
 }
 .sidebar-unpinned:hover { transform: translateX(0); box-shadow: 10px 0 20px rgba(0,0,0,0.7); }
@@ -70,7 +68,7 @@ input[type="radio"], input[type="checkbox"] { accent-color: #29b6f6; cursor: poi
 }
 .sidebar-unpinned:hover::after, .sidebar-unpinned:hover::before { opacity: 0; pointer-events: none; }
 
-.sidebar-content { width: 440px; padding: 20px; box-sizing: border-box; display: flex; flex-direction: column; height: 100%; }
+.sidebar-content { width: 520px; padding: 20px; box-sizing: border-box; display: flex; flex-direction: column; height: 100%; }
 
 .main-content {
     flex: 1; display: flex; flex-direction: column; padding: 20px 20px 20px 35px;
@@ -306,8 +304,6 @@ app.layout = html.Div(
         dcc.Store(id="prev-selected-rows", data=[]),
         dcc.Store(id="target-ts-store", data=None),
         html.Div(id="dummy-output", style={"display": "none"}),
-        dcc.Interval(id="task-interval", interval=10000, n_intervals=0),
-        dcc.Store(id="task-was-running", data=False),
         # === 左側：サイドバー ===
         html.Div(
             id="sidebar-container",
@@ -333,98 +329,6 @@ app.layout = html.Div(
                                     id="pin-btn",
                                     className="btn-pin",
                                     title="サイドバーの固定を解除する",
-                                ),
-                            ],
-                        ),
-                        html.Div(
-                            className="card",
-                            style={
-                                "padding": "15px",
-                                "marginBottom": "20px",
-                                "backgroundColor": "#252525",
-                                "boxShadow": "inset 0 2px 4px rgba(0,0,0,0.5)",
-                            },
-                            children=[
-                                html.Div(
-                                    style={
-                                        "display": "flex",
-                                        "justifyContent": "space-between",
-                                        "alignItems": "center",
-                                        "marginBottom": "12px",
-                                    },
-                                    children=[
-                                        html.H3(
-                                            "Runner Queue",
-                                            style={
-                                                "margin": "0",
-                                                "fontSize": "14px",
-                                                "color": "#ccc",
-                                            },
-                                        ),
-                                    ],
-                                ),
-                                html.Div(
-                                    style={
-                                        "display": "flex",
-                                        "gap": "6px",
-                                        "marginBottom": "10px",
-                                    },
-                                    children=[
-                                        html.Button(
-                                            "▶ Test",
-                                            id="btn-run-test",
-                                            className="btn",
-                                            style={
-                                                "flex": "1",
-                                                "backgroundColor": "#2e7d32",
-                                                "borderColor": "#1b5e20",
-                                                "color": "white",
-                                            },
-                                        ),
-                                        html.Button(
-                                            "▶ Opt",
-                                            id="btn-run-opt",
-                                            className="btn",
-                                            style={
-                                                "flex": "1",
-                                                "backgroundColor": "#1565c0",
-                                                "borderColor": "#0d47a1",
-                                                "color": "white",
-                                            },
-                                        ),
-                                        html.Button(
-                                            "⏹ Stop",
-                                            id="btn-stop-task",
-                                            className="btn",
-                                            style={
-                                                "flex": "1",
-                                                "backgroundColor": "#c62828",
-                                                "borderColor": "#b71c1c",
-                                                "color": "white",
-                                            },
-                                        ),
-                                        html.Button(
-                                            "🗑️ Clear",
-                                            id="btn-clear-queue",
-                                            className="btn",
-                                            style={
-                                                "flex": "1",
-                                                "backgroundColor": "#555",
-                                                "borderColor": "#333",
-                                                "color": "white",
-                                            },
-                                        ),
-                                    ],
-                                ),
-                                html.Div(
-                                    id="queue-display",
-                                    style={
-                                        "fontSize": "12px",
-                                        "color": "#aaa",
-                                        "whiteSpace": "pre-wrap",
-                                        "fontFamily": "monospace",
-                                        "lineHeight": "1.5",
-                                    },
                                 ),
                             ],
                         ),
@@ -546,7 +450,8 @@ app.layout = html.Div(
                                         },
                                         {
                                             "if": {"column_id": "memo"},
-                                            "maxWidth": "80px",
+                                            "minWidth": "130px",
+                                            "maxWidth": "200px",
                                             "textOverflow": "ellipsis",
                                             "overflow": "hidden",
                                             "whiteSpace": "nowrap",
@@ -969,58 +874,6 @@ def update_target_store(selected_rows, prev_selected, current_target, table_data
 
 
 @app.callback(
-    Output("queue-display", "children"),
-    Input("btn-run-test", "n_clicks"),
-    Input("btn-run-opt", "n_clicks"),
-    Input("btn-stop-task", "n_clicks"),
-    Input("btn-clear-queue", "n_clicks"),
-    Input("task-interval", "n_intervals"),
-    prevent_initial_call=False,
-)
-def update_queue(n_test, n_opt, n_stop, n_clear, n_intervals):
-    triggered = ctx.triggered_id
-    if triggered == "btn-run-test":
-        task_manager.add_test()
-    elif triggered == "btn-run-opt":
-        task_manager.add_opt()
-    elif triggered == "btn-stop-task":
-        task_manager.stop_current()
-    elif triggered == "btn-clear-queue":
-        task_manager.clear_queue()
-
-    status = task_manager.get_queue_status()
-
-    lines = []
-    if status["current"]:
-        lines.append(
-            f"🟢 [Running] {status['current']['type'].upper()} (sent: {status['current']['time']})"
-        )
-    else:
-        lines.append("⚪ [Idle] 待機中")
-
-    for i, q in enumerate(status["queue"]):
-        lines.append(f"⏳ [Queue {i+1}] {q['type'].upper()} (sent: {q['time']})")
-
-    return "\n".join(lines)
-
-
-@app.callback(
-    Output("reload-button", "n_clicks"),
-    Output("task-was-running", "data"),
-    Input("task-interval", "n_intervals"),
-    State("task-was-running", "data"),
-    State("reload-button", "n_clicks"),
-)
-def auto_reload_on_finish(n_int, was_running, reload_clicks):
-    status = task_manager.get_queue_status()
-    is_running = status["current"] is not None
-    clicks = reload_clicks or 0
-    if was_running and not is_running:
-        clicks += 1
-    return clicks, is_running
-
-
-@app.callback(
     Output("sidebar-container", "className"),
     Output("pin-btn", "children"),
     Output("pin-btn", "title"),
@@ -1132,6 +985,7 @@ def save_memo(current_data, previous_data):
 @app.callback(
     Output("timestamp-table", "data"),
     Output("table-data", "data"),
+    Output("timestamp-table", "active_cell"),
     Input("reload-button", "n_clicks"),
     Input("base-store", "data"),
     Input("timestamp-table", "active_cell"),
@@ -1139,6 +993,16 @@ def save_memo(current_data, previous_data):
 )
 def update_table(n, base_ts, active_cell, current_data):
     triggered = ctx.triggered_id
+
+    # 削除・Base指定のクリックは処理後に active_cell をリセットする
+    # (リセットしないと同じセルの連続クリックで値が変化せず発火しない)
+    reset_active = dash.no_update
+    if (
+        triggered == "timestamp-table"
+        and active_cell
+        and active_cell.get("column_id") in ("delete_btn", "is_base_str")
+    ):
+        reset_active = None
 
     if (
         triggered == "timestamp-table"
@@ -1158,11 +1022,11 @@ def update_table(n, base_ts, active_cell, current_data):
 
     df = load_data()
     if df.empty:
-        return [], []
+        return [], [], reset_active
 
     timestamps = sorted(df["timestamp"].unique())
     if not timestamps:
-        return [], []
+        return [], [], reset_active
 
     if base_ts not in timestamps:
         base_ts = timestamps[0]
@@ -1199,7 +1063,7 @@ def update_table(n, base_ts, active_cell, current_data):
     for r in records:
         r["id"] = r["timestamp"]
 
-    return records, records
+    return records, records, reset_active
 
 
 @app.callback(
@@ -1300,6 +1164,48 @@ def update_file_table(target_ts, base_ts):
 
 
 @app.callback(
+    Output("file-name-table", "style_data_conditional"),
+    Input("file-name-table", "active_cell"),
+)
+def highlight_selected_case_row(active_cell):
+    """セル単体ではなく選択中ケースの行全体をハイライトする"""
+    styles = [
+        {
+            "if": {"state": "active"},
+            "backgroundColor": "#3a3f47",
+            "border": "1px solid #444",
+        },
+    ]
+    if active_cell:
+        filename = active_cell.get("row_id")
+        if filename:
+            # ソートされても追従するよう、行番号ではなくケース名で指定する
+            styles.append(
+                {
+                    "if": {"filter_query": f'{{name}} = "{filename}"'},
+                    "backgroundColor": "#3a3f47",
+                }
+            )
+        else:
+            styles.append(
+                {
+                    "if": {"row_index": active_cell["row"]},
+                    "backgroundColor": "#3a3f47",
+                }
+            )
+    return styles
+
+
+def add_ts_count_label(frame, sorted_ts):
+    """凡例用の `timestamp (n=件数)` ラベル列を追加し 表示順のリストを返す"""
+    counts = frame.groupby("timestamp").size()
+    frame["ts_label"] = frame["timestamp"].map(
+        lambda t: f"{t} (n={counts.get(t, 0)})"
+    )
+    return [f"{t} (n={counts.get(t, 0)})" for t in sorted_ts]
+
+
+@app.callback(
     Output("score-comparison-graph", "figure"),
     Output("summary-text", "children"),
     Input("timestamp-table", "selected_rows"),
@@ -1345,13 +1251,16 @@ def update_graph(
     sorted_ts = sorted(selected_timestamps)
 
     if graph_type == "abs":
+        label_order = add_ts_count_label(df, sorted_ts)
         fig = px.line(
             df,
             x="test_id",
             y="score",
-            color="timestamp",
+            color="ts_label",
             markers=True,
-            category_orders={"timestamp": sorted_ts},
+            category_orders={"ts_label": label_order},
+            labels={"ts_label": "timestamp"},
+            render_mode="webgl",
         )
         fig.update_layout(yaxis_title="Score")
 
@@ -1368,13 +1277,16 @@ def update_graph(
             ),
             axis=1,
         )
+        label_order = add_ts_count_label(merged, sorted_ts)
         fig = px.line(
             merged,
             x="test_id",
             y="relative_score",
-            color="timestamp",
+            color="ts_label",
             markers=True,
-            category_orders={"timestamp": sorted_ts},
+            category_orders={"ts_label": label_order},
+            labels={"ts_label": "timestamp"},
+            render_mode="webgl",
         )
         fig.add_hline(
             y=1.0,
@@ -1400,35 +1312,60 @@ def update_graph(
         if not meta_df.empty and param_col in meta_df.columns:
             merged = pd.merge(df, meta_df, on="test_id", how="left")
             if graph_type == "param_scatter":
+                label_order = add_ts_count_label(merged, sorted_ts)
                 fig = px.scatter(
                     merged,
                     x=param_col,
                     y="score",
-                    color="timestamp",
+                    color="ts_label",
                     hover_data=["test_id"],
-                    category_orders={"timestamp": sorted_ts},
+                    category_orders={"ts_label": label_order},
+                    labels={"ts_label": "timestamp"},
+                    render_mode="webgl",
                 )
             elif graph_type == "param_box":
+                counts = merged.groupby(param_col)["test_id"].nunique()
+                merged["param_label"] = merged[param_col].apply(
+                    lambda v: f"{v} (n={counts.get(v, 0)})"
+                )
+                label_order = [
+                    f"{v} (n={counts.get(v, 0)})"
+                    for v in sorted(merged[param_col].dropna().unique())
+                ]
                 fig = px.box(
                     merged,
-                    x=param_col,
+                    x="param_label",
                     y="score",
                     color="timestamp",
-                    category_orders={"timestamp": sorted_ts},
+                    category_orders={
+                        "timestamp": sorted_ts,
+                        "param_label": label_order,
+                    },
                 )
             elif graph_type == "param_line":
+                counts = merged.groupby(param_col)["test_id"].nunique()
                 avg_df = (
                     merged.groupby([param_col, "timestamp"])["score"]
                     .mean()
                     .reset_index()
                 )
+                avg_df["param_label"] = avg_df[param_col].apply(
+                    lambda v: f"{v} (n={counts.get(v, 0)})"
+                )
+                label_order = [
+                    f"{v} (n={counts.get(v, 0)})"
+                    for v in sorted(avg_df[param_col].dropna().unique())
+                ]
                 fig = px.line(
                     avg_df,
-                    x=param_col,
+                    x="param_label",
                     y="score",
                     color="timestamp",
                     markers=True,
-                    category_orders={"timestamp": sorted_ts},
+                    category_orders={
+                        "timestamp": sorted_ts,
+                        "param_label": label_order,
+                    },
                 )
             fig.update_layout(
                 xaxis_title=f"Parameter: {param_col}", yaxis_title="Score"
@@ -1465,15 +1402,23 @@ def update_graph(
             merged = merged.dropna(subset=[param_col])
 
             if graph_type == "difficulty_box":
+                counts = merged.groupby(param_col)["test_id"].nunique()
+                merged["param_label"] = merged[param_col].apply(
+                    lambda v: f"{v} (n={counts.get(v, 0)})"
+                )
+                label_order = [
+                    f"{v} (n={counts.get(v, 0)})"
+                    for v in sorted(merged[param_col].dropna().unique())
+                ]
                 fig = px.box(
                     merged,
-                    x=param_col,
+                    x="param_label",
                     y="cv",
                     labels={
-                        param_col: f"Parameter: {param_col}",
+                        "param_label": f"Parameter: {param_col}",
                         "cv": "CV (std/mean)",
                     },
-                    category_orders={param_col: sorted(merged[param_col].unique())},
+                    category_orders={"param_label": label_order},
                 )
                 fig.update_traces(marker_color="#29b6f6")
 
@@ -1489,6 +1434,8 @@ def update_graph(
                         merged[param_col_y], errors="coerce"
                     )
                     merged = merged.dropna(subset=[param_col_y])
+                    cnt_x = merged.groupby(param_col)["test_id"].nunique()
+                    cnt_y = merged.groupby(param_col_y)["test_id"].nunique()
                     avg_cv = (
                         merged.groupby([param_col_y, param_col])["cv"]
                         .mean()
@@ -1504,8 +1451,8 @@ def update_graph(
                         labels=dict(
                             x=f"{param_col}", y=f"{param_col_y}", color="CV Mean"
                         ),
-                        x=[str(x) for x in pivot_df.columns],
-                        y=[str(y) for y in pivot_df.index],
+                        x=[f"{x} (n={cnt_x.get(x, 0)})" for x in pivot_df.columns],
+                        y=[f"{y} (n={cnt_y.get(y, 0)})" for y in pivot_df.index],
                         aspect="auto",
                         color_continuous_scale=[[0.0, "#1e1e1e"], [1.0, "#f44336"]],
                         origin="lower",
@@ -1545,6 +1492,8 @@ def update_graph(
             else:
                 merged["val"] = merged["score"]
 
+            cnt_x = merged.groupby(param_x)["test_id"].nunique()
+            cnt_y = merged.groupby(param_y)["test_id"].nunique()
             avg_df = merged.groupby([param_y, param_x])["val"].mean().reset_index()
             pivot_df = avg_df.pivot(index=param_y, columns=param_x, values="val")
             pivot_df = pivot_df.sort_index().sort_index(axis=1).astype(float)
@@ -1580,8 +1529,8 @@ def update_graph(
                     y=f"{param_y}",
                     color="Rel Ave" if graph_type == "heatmap_rel" else "Abs Ave",
                 ),
-                x=[str(x) for x in pivot_df.columns],
-                y=[str(y) for y in pivot_df.index],
+                x=[f"{x} (n={cnt_x.get(x, 0)})" for x in pivot_df.columns],
+                y=[f"{y} (n={cnt_y.get(y, 0)})" for y in pivot_df.index],
                 aspect="auto",
                 color_continuous_scale=color_scale,
                 color_continuous_midpoint=zmid,
@@ -1718,7 +1667,7 @@ def render_tab_content(tab, active_cell, target_ts, file_data, base_ts, table_da
         return html.Div(
             style={
                 "display": "flex",
-                "flexDirection": "column",
+                "flexDirection": "row",
                 "gap": "20px",
                 "height": "100%",
             },
@@ -1728,6 +1677,7 @@ def render_tab_content(tab, active_cell, target_ts, file_data, base_ts, table_da
                         "flex": "1",
                         "display": "flex",
                         "flexDirection": "column",
+                        "minWidth": "0",
                         "minHeight": "0",
                     },
                     children=[
@@ -1756,6 +1706,7 @@ def render_tab_content(tab, active_cell, target_ts, file_data, base_ts, table_da
                         "flex": "1",
                         "display": "flex",
                         "flexDirection": "column",
+                        "minWidth": "0",
                         "minHeight": "0",
                     },
                     children=[
