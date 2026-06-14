@@ -367,7 +367,19 @@ def _build_main():
                                         selected_className="custom-tab--selected",
                                     ),
                                     dcc.Tab(
-                                        label="Diff (ソースコード)",
+                                        label="入力 (in)",
+                                        value="tab-in",
+                                        className="custom-tab",
+                                        selected_className="custom-tab--selected",
+                                    ),
+                                    dcc.Tab(
+                                        label="ソースコード",
+                                        value="tab-src",
+                                        className="custom-tab",
+                                        selected_className="custom-tab--selected",
+                                    ),
+                                    dcc.Tab(
+                                        label="Diff",
                                         value="tab-diff",
                                         className="custom-tab",
                                         selected_className="custom-tab--selected",

@@ -18,7 +18,10 @@ def render_tab_content(
         if all_timestamps:
             base_ts = all_timestamps[0]
 
-    # Diff はケース選択を必要としないので先に処理する
+    # ソースコードと Diff はケース選択を必要としないので先に処理する
+    if tab == "tab-src":
+        return _render_src_tab(store, target_ts)
+
     if tab == "tab-diff":
         return _render_diff_tab(store, target_ts, base_ts)
 
@@ -39,8 +42,48 @@ def render_tab_content(
     if tab == "tab-text":
         return _render_text_tab(store, timestamp, filename)
 
+    elif tab == "tab-in":
+        return _render_in_tab(store, filename)
+
     elif tab == "tab-vis":
         return _render_vis_tab(store, timestamp, filename)
+
+
+def _code_panel(title, content):
+    """見出しとコピー付きの読み取り専用コードパネルを返す"""
+    return html.Div(
+        style={
+            "display": "flex",
+            "flexDirection": "column",
+            "gap": "10px",
+            "height": "100%",
+        },
+        children=[
+            html.H4(title, style={"margin": "0", "color": "#ccc"}),
+            html.Div(
+                className="code-container",
+                style={"flex": "1"},
+                children=[
+                    dcc.Clipboard(content=content, className="clipboard-btn"),
+                    dcc.Textarea(
+                        value=content, className="code-textarea", readOnly=True
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+def _render_src_tab(store, target_ts):
+    src, src_name = store.source(target_ts)
+    return _code_panel(f"ソースコード ({src_name})", src)
+
+
+def _render_in_tab(store, filename):
+    in_text = store.in_file(filename)
+    if not in_text:
+        in_text = "(入力ファイルが見つかりません)"
+    return _code_panel(f"入力 ({filename})", in_text)
 
 
 def _render_diff_tab(store, target_ts, base_ts):
