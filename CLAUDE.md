@@ -23,10 +23,11 @@ python3 -m ahclib setup    # generates ahc_settings.py in the current working di
 python3 -m ahclib test             # compile + run all test cases in parallel
 python3 -m ahclib test --no-compile  # skip recompilation
 python3 -m ahclib test --no-verbose  # suppress per-case logging
-python3 -m ahclib test -r          # save all stdout/stderr to disk
+python3 -m ahclib test --no-record   # don't save per-case stdout/stderr to disk
+python3 -m ahclib test -m "memo"     # attach a memo (saved to memo.txt, shown in vis)
 ```
 
-Results and the source snapshot are saved under `./ahclib_results/`.
+Compile, verbose logging, and stdout/stderr recording are all **on by default**; the `--no-*` flags disable them. Results and the source snapshot are saved under `./ahclib_results/`.
 
 ### Optuna parameter search
 
@@ -36,7 +37,7 @@ python3 -m ahclib opt --no-wilcoxon  # disable pruner
 python3 -m ahclib opt -a           # enable auto_sampler
 ```
 
-Optuna DB is stored at `./ahclib_results/optimizer_results/`.
+The Optuna study is stored in a **local PostgreSQL database** named `ahclib_optuna_<study_name>`, created automatically if absent. The `./ahclib_results/optimizer_results/<study_name>/` directory holds the output (`result.txt` and plot images), not the study DB. An `optuna-dashboard` process is launched automatically and its URL is logged.
 
 ### Launch dashboards
 
@@ -59,14 +60,21 @@ All per-contest settings live in the `AHCSettings` class:
 | Field | Purpose |
 |---|---|
 | `njobs` | Parallel worker count (capped at `cpu_count - 1`) |
-| `filename`, `compile_command`, `execute_command` | Build and run commands |
+| `filename`, `compile_command`, `execute_command` | Build and run commands (`compile_command = None` skips compilation) |
 | `input_file_names` | List of test case paths, e.g. `[f"./in/{i:04d}.txt" for i in range(100)]` |
 | `timeout` | Per-case timeout in **ms** (`None` = no limit) |
+| `is_int` | Whether the score is parsed as `int` (`True`) or `float` (`False`) |
+| `direction` | `"minimize"` or `"maximize"`; affects relative-score display and Optuna |
 | `get_score(scores)` | Aggregation function (average, geometric mean, etc.) |
-| `direction` | `"minimize"` or `"maximize"` for Optuna |
-| `study_name`, `n_trials`, `njobs_optuna` | Optuna knobs |
+| `use_relative_score` | Compute and report relative scores in the log and CSV |
+| `pre_dir_name` | Baseline result dir name (under `./ahclib_results/`) used for relative scores |
+| `study_name`, `n_trials`, `optuna_timeout`, `njobs_optuna` | Optuna knobs (`optuna_timeout` is in **minutes**, `None` = no limit) |
+| `optuna_seed` | Seed for the sampler and for the WilcoxonPruner input-order shuffle |
 | `objective(trial)` | Returns a tuple of CLI args passed to the solver as `argv[1], argv[2], …` |
+| `optuna_init_trials` | List of param dicts evaluated first (via `study.enqueue_trial`) |
+| `optuna_n_startup_trials` | Random-search trial count for `TPESampler` |
 | `parse_input_params(file_path)` | Optional; parses problem-specific params for the vis dashboard |
+| `vis_beam_input` | Defined in the template; not referenced by the package |
 
 ## Score reporting convention
 

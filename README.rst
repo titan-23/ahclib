@@ -13,7 +13,7 @@ AHC Lib
 初期設定
 ~~~~~~~~~~~~~~~~~~
 
-作業ディレクトリで以下のコマンドを実行し、設定ファイル ``ahc_settings`` ファイルを生成します
+作業ディレクトリで以下のコマンドを実行し、設定ファイル ``ahc_settings.py`` を生成します
 
 .. code-block:: shell
 
@@ -30,13 +30,17 @@ AHC Lib
 
 .. code-block:: shell
 
-    python3 -m ahclib test [-c] [-v] [-r]
+    python3 -m ahclib test [--no-compile] [--no-verbose] [--no-record] [-m MEMO]
 
 **オプション**
 
-- ``-c`` : コンパイルします
-- ``-v`` : ログを表示します(推奨)
-- ``-r`` : 標準出力と標準エラー出力をすべて保存します
+コンパイル、ログ表示、入出力の保存はいずれも既定で有効になっている。無効にするときに以下を指定する
+
+- ``--no-compile`` : コンパイルを行わない
+- ``--no-verbose`` : per-case のログを表示しない
+- ``--no-record`` : 標準出力と標準エラー出力を保存しない
+- ``-m``, ``--memo`` : 実行結果に添えるメモを指定する。結果ディレクトリの ``memo.txt`` に保存され ``vis`` で表示される
+- ``-s``, ``--settings`` : 設定ファイルのパスを指定する (既定は ``ahc_settings.py``)
 
 
 Optuna を用いたパラメータ探索
@@ -46,13 +50,18 @@ Optuna を用いたパラメータ探索
 
 .. code-block:: shell
 
-    python3 -m ahclib opt
+    python3 -m ahclib opt [--no-wilcoxon] [-a]
+
+**オプション**
+
+- ``--no-wilcoxon`` : ``WilcoxonPruner`` を無効にする。既定では有効
+- ``-a``, ``--auto_sampler`` : ``auto_sampler`` を使う。指定しないときは ``TPESampler`` を使う
 
 
 設定ファイル
 -------------
 
-設定ファイル ``ahc_settings`` 中の ``AHCSettings`` クラスに以下の情報を書いてください
+設定ファイル ``ahc_settings.py`` 中の ``AHCSettings`` クラスに以下の情報を書いてください
 
 * スレッド数 (``njobs``)
 
@@ -80,6 +89,23 @@ Optuna を用いたパラメータ探索
 
   - 例: 平均など
 
+* スコアの型 (``is_int``)
+
+  - スコアが整数なら ``True``、小数なら ``False``
+
+* 方向 (``direction``)
+
+  - ``minimize`` か ``maximize``
+  - 相対スコアの計算と Optuna の最適化方向の両方で使われる
+
+* 相対スコアの計算 (``use_relative_score``)
+
+  - ``True`` のとき、相対スコアをログと csv に出力する
+
+* 相対スコアの基準 (``pre_dir_name``)
+
+  - 相対スコアの基準にする過去結果ディレクトリ名を ``./ahclib_results/`` 以下から指定する
+
 
 例:
 
@@ -91,6 +117,10 @@ Optuna を用いたパラメータ探索
     execute_command = "./a.out"
     input_file_names = [f"./in/{str(i).zfill(4)}.txt" for i in range(100)]
     timeout = None
+    is_int = True
+    direction = "maximize"
+    use_relative_score = False
+    pre_dir_name = ""
 
     def get_score(scores: list[float]) -> float:
         return sum(scores) / len(scores)
@@ -122,7 +152,23 @@ Optuna を用いたパラメータ探索用の設定
   - ``None`` の場合は時間制限なし
   - ``n_trials`` と ``optuna_timeout`` のどちらか先に到達した時点で終了する
 
-* optuna のスレッド数 (``n_jobs_optuna``)
+* optuna のスレッド数 (``njobs_optuna``)
+
+  - ``min(njobs_optuna, cpu_count - 1)`` がとられる
+
+* シード (``optuna_seed``)
+
+  - sampler のシードと、``WilcoxonPruner`` 使用時の入力順シャッフルのシードに使われる
+  - ``None`` も指定できる
+
+* ランダム探索の試行回数 (``optuna_n_startup_trials``)
+
+  - ``TPESampler`` がランダムに探索する試行回数
+
+* 初期評価するパラメータ (``optuna_init_trials``)
+
+  - 探索の起点として最初に評価するパラメータ値の辞書のリストを指定する
+  - 各辞書は ``study.enqueue_trial`` に渡される
 
 * 推定するもの
 
@@ -141,7 +187,10 @@ Optuna を用いたパラメータ探索用の設定
   direction = "minimize"
   n_trials = 50
   optuna_timeout = None  # 例: 60 なら 1 時間
-  n_jobs_optuna = 1
+  njobs_optuna = 1
+  optuna_seed = 23
+  optuna_n_startup_trials = 10
+  optuna_init_trials = []
 
   def objective(trial: optuna.trial.Trial) -> tuple:
       start_temp = trial.suggest_float("start_temp", 1, 1e9, log=True)
