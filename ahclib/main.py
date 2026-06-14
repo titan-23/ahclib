@@ -88,9 +88,9 @@ def main():
     args = get_args()
 
     if args.command == "vis":
-        from . import vis
+        from .vis import create_app
 
-        vis.app.run(debug=False)
+        create_app().run(debug=False)
         sys.exit(0)
 
     if args.command == "vis_beam":
