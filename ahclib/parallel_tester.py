@@ -13,6 +13,7 @@ import sys
 from random import Random
 import shutil
 import csv
+import re
 import threading
 import optuna
 import datetime
@@ -25,8 +26,8 @@ logger = getLogger(__name__)
 # --- 単位変換 ---
 MS_PER_SEC = 1000
 
-# --- スコア取得フォーマット (`Score = X` を前提) ---
-SCORE_DELIMITER = " = "
+# --- スコア取得フォーマット (`score = X`、大文字小文字と = 前後の空白は不問) ---
+SCORE_PATTERN = re.compile(r"score\s*=\s*(-?\d+(?:\.\d+)?)", re.IGNORECASE)
 
 # --- ディレクトリ / ファイル構成 ---
 RESULTS_DIR = "ahclib_results"
@@ -73,6 +74,16 @@ def _decode_proc_output(s: Union[str, bytes, None]) -> str:
     return s if isinstance(s, str) else s.decode("utf-8", errors="ignore")
 
 
+def _extract_last_score(stderr: str, is_int: bool) -> Score:
+    """stderr を後ろから走査し、最後に現れる `score = X` の X を返す"""
+    for line in reversed(stderr.splitlines()):
+        matches = SCORE_PATTERN.findall(line)
+        if matches:
+            score_str = matches[-1]
+            return int(score_str) if is_int else float(score_str)
+    raise ValueError("`score = X` が標準エラー出力に見つかりません")
+
+
 def _execute_solver(
     input_file: str,
     cmd: list[str],
@@ -93,9 +104,7 @@ def _execute_solver(
             check=True,
         )
         elapsed = time.perf_counter() - start
-        score_line = result.stderr.rstrip().split("\n")[-1]
-        _, score_str = score_line.split(SCORE_DELIMITER)
-        score = int(score_str) if is_int else float(score_str)
+        score = _extract_last_score(result.stderr, is_int)
         return "AC", score, result.stdout, result.stderr, elapsed
     except subprocess.TimeoutExpired as e:
         elapsed = timeout if timeout is not None else -1.0
