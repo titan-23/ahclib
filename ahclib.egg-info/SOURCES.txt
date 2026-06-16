@@ -8,7 +8,6 @@ ahclib/ahc_util.py
 ahclib/main.py
 ahclib/optimizer.py
 ahclib/parallel_tester.py
-ahclib/vis.py
 ahclib.egg-info/PKG-INFO
 ahclib.egg-info/SOURCES.txt
 ahclib.egg-info/dependency_links.txt
