@@ -1,9 +1,10 @@
 .vscode/
+.claude/
 *.in
 *.out
 out.txt
 
-/ahclibs.egg-info/
+/ahclib.egg-info/
 /dist/
 /build
 
