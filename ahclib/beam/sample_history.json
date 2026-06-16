@@ -1,0 +1,18 @@
+{
+  "INF": 1000000000,
+  "nodes": [
+    {"node_id": 0, "parent_id": -1, "turn": 1, "score": 10, "hash": 1000, "action": "A", "status": 0},
+    {"node_id": 1, "parent_id": -1, "turn": 1, "score": 20, "hash": 1001, "action": "B", "status": 0},
+    {"node_id": 2, "parent_id": -1, "turn": 1, "score": 30, "hash": 1002, "action": "C", "status": 1},
+    {"node_id": 3, "parent_id": 0, "turn": 2, "score": 15, "hash": 1003, "action": "A", "status": 0},
+    {"node_id": 4, "parent_id": 0, "turn": 2, "score": 18, "hash": 1004, "action": "B", "status": 2},
+    {"node_id": 5, "parent_id": 1, "turn": 2, "score": 25, "hash": 1005, "action": "A", "status": 0},
+    {"node_id": 6, "parent_id": 3, "turn": 3, "score": 12, "hash": 1006, "action": "A", "status": 0, "is_answer": true, "state_info": {"note": "goal"}},
+    {"node_id": 7, "parent_id": 5, "turn": 3, "score": 22, "hash": 1007, "action": "B", "status": 0}
+  ],
+  "snapshots": [
+    {"turn": 1, "active_node_ids": [0, 1], "threshold": 25},
+    {"turn": 2, "active_node_ids": [3, 5], "threshold": 28},
+    {"turn": 3, "active_node_ids": [6, 7], "threshold": 30}
+  ]
+}

@@ -37,6 +37,14 @@ def create_app(generate_board_visual, history_path="history.json"):
         suppress_callback_exceptions=True,
     )
 
+    # 転送量削減のため gzip 圧縮を有効化する。未導入なら無視する。挙動は不変。
+    try:
+        from flask_compress import Compress
+
+        Compress(app.server)
+    except Exception:
+        pass
+
     app.layout = html.Div(
         style={
             "backgroundColor": DARK_THEME["background"],
@@ -511,9 +519,24 @@ def create_app(generate_board_visual, history_path="history.json"):
     )
     def load_data(n_clicks, _):
         global _DATA_CACHE
+        # ファイルが無変更なら再処理を飛ばす。処理結果は決定的で同一。
+        try:
+            st = os.stat(_HISTORY_PATH)
+            sig = (st.st_mtime, st.st_size)
+        except OSError:
+            sig = None
+        if (
+            sig is not None
+            and _DATA_CACHE.get("file_sig") == sig
+            and _DATA_CACHE.get("processed")
+        ):
+            return {"ts": time.time()}, _DATA_CACHE.get("max_t", 1), None
         processed, max_t, marks = load_and_process_data(_HISTORY_PATH)
         _DATA_CACHE["processed"] = processed
         _DATA_CACHE["compact_layout_cache"] = {}
+        _DATA_CACHE["active_path_cache"] = {}
+        _DATA_CACHE["max_t"] = max_t
+        _DATA_CACHE["file_sig"] = sig
         return {"ts": time.time()}, max_t, None
 
     @app.callback(
@@ -598,7 +621,6 @@ def create_app(generate_board_visual, history_path="history.json"):
         inf_value = processed.get("current_data", {}).get("INF", 1e18)
 
         min_t, max_t = turn_range
-        active_path = set()
 
         valid_max_t = max_t
         while valid_max_t >= min_t:
@@ -610,17 +632,23 @@ def create_app(generate_board_visual, history_path="history.json"):
         else:
             terminals = set()
 
-        curr = list(terminals)
-        while curr:
-            next_nodes = []
-            for nid in curr:
-                if nid in nodes_dict:
-                    active_path.add(nid)
-                    pid = str(nodes_dict[nid]["parent_id"])
-                    if pid != "-1" and pid not in active_path:
-                        next_nodes.append(pid)
-            curr = next_nodes
-        active_path.add("-1")
+        # 生存経路は valid_max_t だけで決まる。発火ごとの遡りをキャッシュする。読み取り専用で共有する。
+        ap_cache = _DATA_CACHE.setdefault("active_path_cache", {})
+        active_path = ap_cache.get(valid_max_t)
+        if active_path is None:
+            active_path = set()
+            curr = list(terminals)
+            while curr:
+                next_nodes = []
+                for nid in curr:
+                    if nid in nodes_dict:
+                        active_path.add(nid)
+                        pid = nodes_dict[nid]["spid"]
+                        if pid != "-1" and pid not in active_path:
+                            next_nodes.append(pid)
+                curr = next_nodes
+            active_path.add("-1")
+            ap_cache[valid_max_t] = active_path
 
         compact_mode = "compact" in visibility
         positions_map = base_positions
@@ -646,26 +674,17 @@ def create_app(generate_board_visual, history_path="history.json"):
 
         collapsed_set = set(collapsed_ids)
         is_ancestor_collapsed = {"-1": False}
-        for n in processed.get("nodes_sorted", nodes):
-            nid = str(n["node_id"])
-            pid = str(n["parent_id"])
-            is_ancestor_collapsed[nid] = (
-                pid in collapsed_set
-            ) or is_ancestor_collapsed.get(pid, False)
+        # 折畳が空なら全ノード走査は不要。get の既定 False が同じ結果になる。
+        if collapsed_set:
+            for n in processed.get("nodes_sorted", nodes):
+                nid = n["sid"]
+                pid = n["spid"]
+                is_ancestor_collapsed[nid] = (
+                    pid in collapsed_set
+                ) or is_ancestor_collapsed.get(pid, False)
 
         show_pruned = "show_pruned" in visibility and not compact_mode
         use_heatmap = "heatmap" in visibility
-
-        def get_heatmap_color(score, turn):
-            if score >= inf_value:
-                return DARK_THEME["inf"]
-            stats = turn_stats.get(turn)
-            if not stats:
-                return "rgb(128, 128, 128)"
-            t_min, t_max = stats["min"], stats["max"]
-            ratio = 0.5 if t_max == t_min else (score - t_min) / (t_max - t_min)
-            r, g, b = int(25 + ratio * 186), int(118 - ratio * 71), int(210 - ratio * 163)
-            return f"rgb({r}, {g}, {b})"
 
         if tree_direction == "TB":
             depth_gap = 200
@@ -696,18 +715,18 @@ def create_app(generate_board_visual, history_path="history.json"):
 
         visible_ids = set()
         for n in nodes:
-            nid = str(n["node_id"])
+            nid = n["sid"]
             if is_ancestor_collapsed.get(nid, False):
                 continue
             if min_t <= n["turn"] <= max_t:
                 if not show_pruned and nid not in active_path:
                     continue
                 visible_ids.add(nid)
-                curr_pid = str(n["parent_id"])
+                curr_pid = n["spid"]
                 while curr_pid != "-1" and curr_pid not in visible_ids:
                     if curr_pid in nodes_dict and nodes_dict[curr_pid]["turn"] < min_t:
                         visible_ids.add(curr_pid)
-                        curr_pid = str(nodes_dict[curr_pid]["parent_id"])
+                        curr_pid = nodes_dict[curr_pid]["spid"]
                     else:
                         break
 
@@ -716,7 +735,7 @@ def create_app(generate_board_visual, history_path="history.json"):
 
         valid_ids = {"-1"}
         for n in visible_nodes:
-            nid = str(n["node_id"])
+            nid = n["sid"]
             valid_ids.add(nid)
 
             if n.get("is_answer", False):
@@ -727,6 +746,9 @@ def create_app(generate_board_visual, history_path="history.json"):
                 cls = "status-active"
             else:
                 cls = "status-pruned"
+
+            # status-pruned と status-invalid は font-size 0 で文字を出さない。label を省く。
+            has_text = cls == "status-active" or cls == "status-answer"
 
             if nid in collapsed_ids:
                 cls += " folded"
@@ -743,10 +765,10 @@ def create_app(generate_board_visual, history_path="history.json"):
             if n["turn"] < min_t:
                 cls += " out-of-range"
 
-            element = {
-                "data": {"id": nid, "label": f"T:{n['turn']}\nS:{n['score']}"},
-                "classes": cls,
-            }
+            el_data = {"id": nid}
+            if has_text:
+                el_data["label"] = n["label"]
+            element = {"data": el_data, "classes": cls}
 
             pos = positions_map.get(nid, {"depth": 0, "breadth_center": 0.0})
             if tree_direction == "TB":
@@ -761,13 +783,13 @@ def create_app(generate_board_visual, history_path="history.json"):
                 }
 
             if use_heatmap:
-                element["data"]["bg_color"] = get_heatmap_color(n["score"], n["turn"])
+                element["data"]["bg_color"] = n["heatmap_color"]
                 element["classes"] += " heatmap-node"
 
             elements.append(element)
 
         for n in visible_nodes:
-            nid, pid = str(n["node_id"]), str(n["parent_id"])
+            nid, pid = n["sid"], n["spid"]
             if pid in valid_ids:
                 elements.append(
                     {

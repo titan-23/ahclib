@@ -2,6 +2,21 @@ import json
 import os
 from collections import deque
 
+from .config import DARK_THEME
+
+
+def _heatmap_color(score, turn, turn_stats, inf_val):
+    """app.py の get_heatmap_color と同一の色を返す。読込時に各ノードへ事前計算する。"""
+    if score >= inf_val:
+        return DARK_THEME["inf"]
+    stats = turn_stats.get(turn)
+    if not stats:
+        return "rgb(128, 128, 128)"
+    t_min, t_max = stats["min"], stats["max"]
+    ratio = 0.5 if t_max == t_min else (score - t_min) / (t_max - t_min)
+    r, g, b = int(25 + ratio * 186), int(118 - ratio * 71), int(210 - ratio * 163)
+    return f"rgb({r}, {g}, {b})"
+
 
 def compute_tree_layout(root_id, children_dict, nodes_dict, MIN_GAP=1.0, mutate_children_order=False):
     """Reingold-Tilford 風のツリーレイアウトを計算する（反復実装）。
@@ -317,6 +332,14 @@ def load_and_process_data(filepath="history.json"):
             stats["min"] = 0
             stats["max"] = 0
             stats["mean"] = 0
+
+    # 各ノードへ文字列ID・ラベル・ヒートマップ色を事前計算する。
+    # update_elements の毎回の str() 変換・f文字列生成・色計算を省く。出力は同一。
+    for n in data["nodes"]:
+        n["sid"] = str(n["node_id"])
+        n["spid"] = str(n["parent_id"])
+        n["label"] = f"T:{n['turn']}\nS:{n['score']}"
+        n["heatmap_color"] = _heatmap_color(n["score"], n["turn"], turn_stats, inf_val)
 
     positions = compute_tree_layout("-1", children_dict, nodes_dict, mutate_children_order=True)
 
