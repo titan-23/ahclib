@@ -37,14 +37,6 @@ def create_app(generate_board_visual, history_path="history.json"):
         suppress_callback_exceptions=True,
     )
 
-    # 転送量削減のため gzip 圧縮を有効化する。未導入なら無視する。挙動は不変。
-    try:
-        from flask_compress import Compress
-
-        Compress(app.server)
-    except Exception:
-        pass
-
     app.layout = html.Div(
         style={
             "backgroundColor": DARK_THEME["background"],
@@ -535,6 +527,7 @@ def create_app(generate_board_visual, history_path="history.json"):
         _DATA_CACHE["processed"] = processed
         _DATA_CACHE["compact_layout_cache"] = {}
         _DATA_CACHE["active_path_cache"] = {}
+        _DATA_CACHE["elements_cache"] = {}
         _DATA_CACHE["max_t"] = max_t
         _DATA_CACHE["file_sig"] = sig
         return {"ts": time.time()}, max_t, None
@@ -613,6 +606,20 @@ def create_app(generate_board_visual, history_path="history.json"):
         if not nodes:
             return [], dash.no_update
 
+        # 同じ入力なら作り直さず保持結果を返す。出力は同一。上限を超えたら破棄する。
+        cache_key = (
+            tuple(turn_range),
+            tuple(sorted(visibility or [])),
+            tuple(sorted(collapsed_ids or [])),
+            tuple(sorted(bookmarked_ids or [])),
+            tree_direction,
+            search_query or "",
+        )
+        el_cache = _DATA_CACHE.setdefault("elements_cache", {})
+        cached_elements = el_cache.get(cache_key)
+        if cached_elements is not None:
+            return cached_elements, layout_config
+
         nodes_dict = processed.get("nodes_dict", {})
         children_dict = processed.get("children_dict", {})
         snapshots_dict = processed.get("snapshots_dict", {})
@@ -673,15 +680,17 @@ def create_app(generate_board_visual, history_path="history.json"):
             positions_map = compact_positions
 
         collapsed_set = set(collapsed_ids)
-        is_ancestor_collapsed = {"-1": False}
-        # 折畳が空なら全ノード走査は不要。get の既定 False が同じ結果になる。
+        # 折畳ノードの子孫だけを集める。全ノード走査を避ける。隠す集合は従来と同一。
+        hidden_ids = set()
         if collapsed_set:
-            for n in processed.get("nodes_sorted", nodes):
-                nid = n["sid"]
-                pid = n["spid"]
-                is_ancestor_collapsed[nid] = (
-                    pid in collapsed_set
-                ) or is_ancestor_collapsed.get(pid, False)
+            stack = []
+            for c in collapsed_set:
+                stack.extend(children_dict.get(c, []))
+            while stack:
+                h = stack.pop()
+                if h not in hidden_ids:
+                    hidden_ids.add(h)
+                    stack.extend(children_dict.get(h, []))
 
         show_pruned = "show_pruned" in visibility and not compact_mode
         use_heatmap = "heatmap" in visibility
@@ -693,7 +702,8 @@ def create_app(generate_board_visual, history_path="history.json"):
             depth_gap = 300
             breadth_gap = 60
 
-        pos_start = positions_map.get("-1", {"depth": 0, "breadth_center": 0.0})
+        default_pos = {"depth": 0, "breadth_center": 0.0}
+        pos_start = positions_map.get("-1", default_pos)
         start_x = (
             pos_start["breadth_center"] * breadth_gap
             if tree_direction == "TB"
@@ -716,7 +726,7 @@ def create_app(generate_board_visual, history_path="history.json"):
         visible_ids = set()
         for n in nodes:
             nid = n["sid"]
-            if is_ancestor_collapsed.get(nid, False):
+            if nid in hidden_ids:
                 continue
             if min_t <= n["turn"] <= max_t:
                 if not show_pruned and nid not in active_path:
@@ -770,7 +780,7 @@ def create_app(generate_board_visual, history_path="history.json"):
                 el_data["label"] = n["label"]
             element = {"data": el_data, "classes": cls}
 
-            pos = positions_map.get(nid, {"depth": 0, "breadth_center": 0.0})
+            pos = positions_map.get(nid, default_pos)
             if tree_direction == "TB":
                 element["position"] = {
                     "x": pos["breadth_center"] * breadth_gap,
@@ -822,12 +832,20 @@ def create_app(generate_board_visual, history_path="history.json"):
             "refresh": time.time(),
         }
 
+        if len(el_cache) >= 64:
+            el_cache.clear()
+        el_cache[cache_key] = elements
         return elements, layout_config
 
     @app.callback(
-        Output("turn-stats-container", "children"), Input("full-data-store", "data")
+        Output("turn-stats-container", "children"),
+        Input("full-data-store", "data"),
+        Input("left-tabs", "value"),
     )
-    def update_turn_stats(store_signal):
+    def update_turn_stats(store_signal, left_tab):
+        # 統計タブを開いている時だけ図を作る。表示内容は同一。
+        if left_tab != "tab-stats":
+            return dash.no_update
         processed = _DATA_CACHE.get("processed")
         if not processed:
             return html.Div("データがありません", style={"padding": "20px"})
@@ -950,9 +968,14 @@ def create_app(generate_board_visual, history_path="history.json"):
 
     @app.callback(
         Output("all-paths-graph", "figure"),
-        [Input("full-data-store", "data"), Input("turn-range-slider", "value")],
+        Input("full-data-store", "data"),
+        Input("turn-range-slider", "value"),
+        Input("left-tabs", "value"),
     )
-    def update_all_graph(store_signal, turn_range):
+    def update_all_graph(store_signal, turn_range, left_tab):
+        # 全体スコア推移タブを開いている時だけ作る。表示内容は同一。
+        if left_tab != "tab-all-graph":
+            return dash.no_update
         processed = _DATA_CACHE.get("processed", {})
         nodes = processed.get("current_data", {}).get("nodes", [])
         if not nodes:
@@ -962,9 +985,8 @@ def create_app(generate_board_visual, history_path="history.json"):
         min_t, max_t = turn_range
         nodes_dict = processed.get("nodes_dict", {})
 
-        start_base_score = min(
-            [nn["score"] for nn in nodes if nn["turn"] == min_t] or [nodes[0]["score"]]
-        )
+        turn_min_all = processed.get("turn_min_all", {})
+        start_base_score = turn_min_all.get(min_t, nodes[0]["score"])
 
         x, y = [], []
         for n in nodes:
@@ -1031,10 +1053,18 @@ def create_app(generate_board_visual, history_path="history.json"):
             Input("cytoscape-tree", "tapNodeData"),
             Input("show-goal-path-store", "data"),
             Input("clicked-child-store", "data"),
+            Input("info-tabs", "value"),
         ],
         [State("full-data-store", "data")],
     )
-    def display_node(node_data, show_goal, clicked_child, store_signal):
+    def display_node(node_data, show_goal, clicked_child, info_tab, store_signal):
+        # 盤面とスコア図は該当タブを開いている時だけ作る。表示内容は同一。
+        # info-tabs の切替だけが要因なら詳細・操作列・スタイルシートは据え置く。
+        only_tab_switch = bool(callback_context.triggered) and callback_context.triggered[
+            0
+        ]["prop_id"].startswith("info-tabs")
+        want_board = info_tab == "tab-state"
+        want_score = info_tab == "tab-score"
         processed = _DATA_CACHE.get("processed", {})
         if not processed:
             return (
@@ -1049,18 +1079,9 @@ def create_app(generate_board_visual, history_path="history.json"):
         nodes_dict = processed.get("nodes_dict", {})
         children_dict = processed.get("children_dict", {})
         snapshots_dict = processed.get("snapshots_dict", {})
-        valid_scores = processed.get("valid_scores", [])
-        turn_stats = processed.get("turn_stats", {})
-        max_turn = max([int(t) for t in turn_stats.keys()]) if turn_stats else 10
+        max_turn = processed.get("max_t", 10)
 
-        y_range = (
-            [
-                min(valid_scores) - (max(valid_scores) - min(valid_scores)) * 0.05,
-                max(valid_scores) + (max(valid_scores) - min(valid_scores)) * 0.05,
-            ]
-            if valid_scores
-            else None
-        )
+        y_range = processed.get("y_range")
 
         detail_elements = html.Div(
             "ノードを選択してください", style={"color": "#aaa", "padding": "10px"}
@@ -1173,9 +1194,10 @@ def create_app(generate_board_visual, history_path="history.json"):
                         if nid in nodes_dict
                     ]
                 )
-                if action_seq not in _BOARD_CACHE:
-                    _BOARD_CACHE[action_seq] = _generate_board_visual(action_seq)
-                state_visual = _BOARD_CACHE[action_seq]
+                if want_board:
+                    if action_seq not in _BOARD_CACHE:
+                        _BOARD_CACHE[action_seq] = _generate_board_visual(action_seq)
+                    state_visual = _BOARD_CACHE[action_seq]
 
                 subtree_node_ids, subtree_edge_ids, queue, target_id_str = (
                     [],
@@ -1192,59 +1214,60 @@ def create_app(generate_board_visual, history_path="history.json"):
                             subtree_edge_ids.append(f"e{curr_node}_{child}")
                             queue.append(child)
 
-                path_scores = [
-                    nodes_dict[nid]["score"] for nid in path_ids if nid in nodes_dict
-                ]
-                path_turns = [
-                    nodes_dict[nid]["turn"] for nid in path_ids if nid in nodes_dict
-                ]
-                path_thresholds = [
-                    snapshots_dict[t]["threshold"] if t in snapshots_dict else None
-                    for t in path_turns
-                ]
+                if want_score:
+                    path_scores = [
+                        nodes_dict[nid]["score"] for nid in path_ids if nid in nodes_dict
+                    ]
+                    path_turns = [
+                        nodes_dict[nid]["turn"] for nid in path_ids if nid in nodes_dict
+                    ]
+                    path_thresholds = [
+                        snapshots_dict[t]["threshold"] if t in snapshots_dict else None
+                        for t in path_turns
+                    ]
 
-                if path_turns:
-                    fig.add_trace(
-                        go.Scatter(
-                            x=path_turns[::-1],
-                            y=path_scores[::-1],
-                            mode="lines+markers",
-                            name="ノードスコア",
-                            line=dict(color="#4fc3f7"),
+                    if path_turns:
+                        fig.add_trace(
+                            go.Scatter(
+                                x=path_turns[::-1],
+                                y=path_scores[::-1],
+                                mode="lines+markers",
+                                name="ノードスコア",
+                                line=dict(color="#4fc3f7"),
+                            )
                         )
-                    )
 
-                val_th_x = [
-                    t
-                    for t, th in zip(path_turns[::-1], path_thresholds[::-1])
-                    if th is not None and isinstance(th, (int, float)) and th < inf_value
-                ]
-                val_th_y = [
-                    th
-                    for th in path_thresholds[::-1]
-                    if th is not None and isinstance(th, (int, float)) and th < inf_value
-                ]
-                if val_th_x:
-                    fig.add_trace(
-                        go.Scatter(
-                            x=val_th_x,
-                            y=val_th_y,
-                            mode="lines",
-                            name="閾値",
-                            line=dict(color="#ff5252", dash="dash"),
+                    val_th_x = [
+                        t
+                        for t, th in zip(path_turns[::-1], path_thresholds[::-1])
+                        if th is not None and isinstance(th, (int, float)) and th < inf_value
+                    ]
+                    val_th_y = [
+                        th
+                        for th in path_thresholds[::-1]
+                        if th is not None and isinstance(th, (int, float)) and th < inf_value
+                    ]
+                    if val_th_x:
+                        fig.add_trace(
+                            go.Scatter(
+                                x=val_th_x,
+                                y=val_th_y,
+                                mode="lines",
+                                name="閾値",
+                                line=dict(color="#ff5252", dash="dash"),
+                            )
                         )
-                    )
 
-                fig.update_layout(
-                    template="plotly_dark",
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    plot_bgcolor="rgba(0,0,0,0)",
-                    margin=dict(l=20, r=20, t=20, b=20),
-                    height=300,
-                    legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
-                    yaxis=dict(range=y_range) if y_range else None,
-                    xaxis=dict(range=[0, max_turn], title="Turn"),
-                )
+                    fig.update_layout(
+                        template="plotly_dark",
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        margin=dict(l=20, r=20, t=20, b=20),
+                        height=300,
+                        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+                        yaxis=dict(range=y_range) if y_range else None,
+                        xaxis=dict(range=[0, max_turn], title="Turn"),
+                    )
 
                 if subtree_node_ids:
                     new_styles.append(
@@ -1317,20 +1340,8 @@ def create_app(generate_board_visual, history_path="history.json"):
                     )
 
         if show_goal:
-            nodes_dict_local = processed.get("nodes_dict", {})
-            goal_nodes = [n for n in nodes_dict_local.values() if n.get("is_answer", False)]
-            goal_path_ids = set()
-            goal_edge_ids = set()
-
-            for g in goal_nodes:
-                curr = str(g["node_id"])
-                while curr != "-1" and curr in nodes_dict_local:
-                    goal_path_ids.add(curr)
-                    p = str(nodes_dict_local[curr]["parent_id"])
-                    if p != "-1" or curr != "-1":
-                        goal_edge_ids.add(f"e{p}_{curr}")
-                    curr = p
-                goal_path_ids.add("-1")
+            goal_path_ids = processed.get("goal_path_ids", set())
+            goal_edge_ids = processed.get("goal_edge_ids", set())
 
             if goal_path_ids:
                 new_styles.append(
@@ -1356,7 +1367,11 @@ def create_app(generate_board_visual, history_path="history.json"):
                     }
                 )
 
-        return detail_elements, action_seq, state_visual, fig, new_styles
+        board_out = state_visual if want_board else dash.no_update
+        score_out = fig if want_score else dash.no_update
+        if only_tab_switch:
+            return dash.no_update, dash.no_update, board_out, score_out, dash.no_update
+        return detail_elements, action_seq, board_out, score_out, new_styles
 
     @app.callback(
         Output("collapsed-nodes-store", "data"),

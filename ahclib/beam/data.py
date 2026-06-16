@@ -294,7 +294,9 @@ def load_and_process_data(filepath="history.json"):
         if t in turn_stats:
             turn_stats[t]["unique_parents"] = len(parents)
 
-            paths = []
+            # 各ノードの根からの経路の共通接頭辞を逐次縮約する。
+            # 経路を全部保持せず、共通部分が根だけになったら打ち切る。出力は従来と同一。
+            common = None
             for nid in valid_active_ids:
                 path = []
                 curr = nid
@@ -302,19 +304,21 @@ def load_and_process_data(filepath="history.json"):
                     path.append(curr)
                     curr = str(nodes_dict[curr]["parent_id"])
                 path.append("-1")
-                paths.append(path[::-1])
+                path.reverse()
+                if common is None:
+                    common = path
+                    continue
+                k = 0
+                m = min(len(common), len(path))
+                while k < m and common[k] == path[k]:
+                    k += 1
+                common = common[:k]
+                if len(common) <= 1:
+                    break
 
-            common_count = 0
-            if paths:
-                min_len = min(len(p) for p in paths)
-                for i in range(min_len):
-                    if all(p[i] == paths[0][i] for p in paths):
-                        common_count += 1
-                    else:
-                        break
-
+            common_count = len(common) if common else 0
             turn_stats[t]["common_ancestor_depth"] = (
-                max(0, common_count - 1) if paths else 0
+                max(0, common_count - 1) if valid_active_ids else 0
             )
 
     valid_scores = [n["score"] for n in data["nodes"] if n["score"] < inf_val]
@@ -335,11 +339,39 @@ def load_and_process_data(filepath="history.json"):
 
     # 各ノードへ文字列ID・ラベル・ヒートマップ色を事前計算する。
     # update_elements の毎回の str() 変換・f文字列生成・色計算を省く。出力は同一。
+    # あわせて update_all_graph 用にターン別の最小スコアを集める。
+    turn_min_all = {}
     for n in data["nodes"]:
         n["sid"] = str(n["node_id"])
         n["spid"] = str(n["parent_id"])
         n["label"] = f"T:{n['turn']}\nS:{n['score']}"
         n["heatmap_color"] = _heatmap_color(n["score"], n["turn"], turn_stats, inf_val)
+        t = n["turn"]
+        s = n["score"]
+        if t not in turn_min_all or s < turn_min_all[t]:
+            turn_min_all[t] = s
+
+    # スコア推移グラフの y 範囲。display_node が毎クリック計算していたものを1回にする。
+    if valid_scores:
+        _vmin, _vmax = min(valid_scores), max(valid_scores)
+        _pad = (_vmax - _vmin) * 0.05
+        y_range = [_vmin - _pad, _vmax + _pad]
+    else:
+        y_range = None
+
+    # ゴール経路のノード・辺集合。display_node が show_goal のたびに全探索していた。
+    goal_path_ids = set()
+    goal_edge_ids = set()
+    for gid, gn in nodes_dict.items():
+        if not gn.get("is_answer", False):
+            continue
+        curr = gid
+        while curr != "-1" and curr in nodes_dict:
+            goal_path_ids.add(curr)
+            p = nodes_dict[curr]["spid"]
+            goal_edge_ids.add(f"e{p}_{curr}")
+            curr = p
+        goal_path_ids.add("-1")
 
     positions = compute_tree_layout("-1", children_dict, nodes_dict, mutate_children_order=True)
 
@@ -361,6 +393,7 @@ def load_and_process_data(filepath="history.json"):
         }
 
     nodes_sorted = sorted(nodes, key=lambda x: x.get("turn", 0))
+    max_t = max([n["turn"] for n in nodes]) if nodes else 1
 
     processed = {
         "current_data": data,
@@ -371,9 +404,13 @@ def load_and_process_data(filepath="history.json"):
         "turn_stats": turn_stats,
         "base_positions": base_positions,
         "nodes_sorted": nodes_sorted,
+        "turn_min_all": turn_min_all,
+        "y_range": y_range,
+        "goal_path_ids": goal_path_ids,
+        "goal_edge_ids": goal_edge_ids,
+        "max_t": max_t,
     }
 
-    max_t = max([n["turn"] for n in nodes]) if nodes else 1
     marks = {i: str(i) for i in range(0, max_t + 1) if i % 10 == 0 or i == max_t}
 
     return processed, max_t, marks
