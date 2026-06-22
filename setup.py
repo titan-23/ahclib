@@ -1,4 +1,4 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 from pathlib import Path
 
 setup(
@@ -11,7 +11,7 @@ setup(
     long_description_content_type="text/x-rst",
     license="MIT License",
     url="https://github.com/titan-23/ahclib",
-    packages=["ahclib"],
+    packages=find_packages(),
     install_requires=[],
     python_requires=">=3.10",
     keywords=["AtCoder", "AHC", "heuristic"],

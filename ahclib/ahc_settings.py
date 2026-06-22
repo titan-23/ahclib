@@ -60,7 +60,8 @@ class AHCSettings:
             trial.suggest_float("w1", 1e-2, 1e2, log=True),
             trial.suggest_float("w2", 1e-2, 1e2, log=True),
         ]
-        W = list(map(x / sum(W) for x in W))
+        total = sum(W)
+        W = [w / total for w in W]
         return (start_temp, k, *W)
 
     # 探索の起点として最初に評価するパラメータ値の辞書をリストを指定する
