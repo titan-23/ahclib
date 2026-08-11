@@ -429,12 +429,25 @@ def _worker_process_file_opt_pruner(args) -> tuple[int, Optional[float]]:
 
 def _worker_process_file_light(args) -> float:
     """入力 `input_file` を処理する (軽量版)"""
-    input_file, cmd, timeout, is_int, use_relative_score, pre_data = args
+    (
+        input_file,
+        cmd,
+        timeout,
+        is_int,
+        use_relative_score,
+        pre_data,
+        cancel_event,
+    ) = args
     score = _run_case_for_opt(
-        input_file, cmd, timeout, is_int, use_relative_score, pre_data
+        input_file,
+        cmd,
+        timeout,
+        is_int,
+        use_relative_score,
+        pre_data,
+        cancel_event,
     )
-    assert score is not None
-    return score
+    return math.nan if score is None else score
 
 
 def _increment_counter(state: WorkerState) -> int:
@@ -671,11 +684,22 @@ class ParallelTester:
                 logger.error(e.stderr.rstrip())
             sys.exit(1)
 
-    def _map_in_parallel(self, worker_func: Callable, args_list: list) -> list:
+    def _map_in_parallel(
+        self,
+        worker_func: Callable,
+        args_list: list,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> list:
         """ThreadPool で `worker_func` を `args_list` 全件に適用しリストで返す"""
         max_workers = max(1, self.cpu_count)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
+        try:
             return list(executor.map(worker_func, args_list))
+        finally:
+            # KeyboardInterrupt時はexecutorの終了待ちより先にsolverへ通知する。
+            if cancel_event is not None:
+                cancel_event.set()
+            executor.shutdown(wait=True, cancel_futures=True)
 
     def run_opt_pruner(self, trial: optuna.trial.Trial) -> PrunerRunResult:
         """Optuna trial 用に並列実行し pruner が `should_prune` を返したら打ち切る
@@ -713,39 +737,52 @@ class ParallelTester:
         pruned = False
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures: dict = {}
-            for _ in range(max_workers):
-                _submit_next(
-                    executor, args_iter, futures, _worker_process_file_opt_pruner
-                )
-
-            while futures:
-                done, _ = concurrent.futures.wait(
-                    futures, return_when=concurrent.futures.FIRST_COMPLETED
-                )
-                for future in done:
-                    futures.pop(future)
-                    id_, score = future.result()
-                    if score is None:
-                        continue
-                    trial.report(score, id_)
-                    scores_list[id_] = score
-                    if trial.should_prune():
-                        pruned = True
-                        # future.cancel() では走行中の solver は止まらないため、
-                        # event を通じて各 worker が subprocess を終了する。
-                        cancel_event.set()
-                        for pending in futures:
-                            pending.cancel()
-                        break
+            try:
+                for _ in range(max_workers):
                     _submit_next(
-                        executor, args_iter, futures, _worker_process_file_opt_pruner
+                        executor,
+                        args_iter,
+                        futures,
+                        _worker_process_file_opt_pruner,
                     )
-                if pruned:
-                    break
+
+                while futures:
+                    done, _ = concurrent.futures.wait(
+                        futures, return_when=concurrent.futures.FIRST_COMPLETED
+                    )
+                    for future in done:
+                        futures.pop(future)
+                        id_, score = future.result()
+                        if score is None:
+                            continue
+                        trial.report(score, id_)
+                        scores_list[id_] = score
+                        if trial.should_prune():
+                            pruned = True
+                            # future.cancel() では走行中の solver は止まらないため、
+                            # event を通じて各 worker が subprocess を終了する。
+                            cancel_event.set()
+                            for pending in futures:
+                                pending.cancel()
+                            break
+                        _submit_next(
+                            executor,
+                            args_iter,
+                            futures,
+                            _worker_process_file_opt_pruner,
+                        )
+                    if pruned:
+                        break
+            finally:
+                # Ctrl-Cでもwith節のshutdown待ちに入る前にsolverを終了する。
+                cancel_event.set()
+                for pending in futures:
+                    pending.cancel()
         return PrunerRunResult(scores=scores_list, pruned=pruned)
 
     def run(self) -> list[float]:
         """全ケースを並列実行しスコアリストだけ返す (ログ・記録なし)"""
+        cancel_event = threading.Event()
         cmd = self.execute_command + self.added_command
         args_list = [
             (
@@ -755,10 +792,15 @@ class ParallelTester:
                 self.is_int,
                 self.use_relative_score,
                 self.pre_data,
+                cancel_event,
             )
             for file in self.input_file_names
         ]
-        return self._map_in_parallel(_worker_process_file_light, args_list)
+        return self._map_in_parallel(
+            _worker_process_file_light,
+            args_list,
+            cancel_event=cancel_event,
+        )
 
     def _create_output_dir(self) -> str:
         """タイムスタンプ付きの出力ディレクトリを作って返す 既存なら例外"""

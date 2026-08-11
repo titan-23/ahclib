@@ -5,16 +5,19 @@ import multiprocessing
 import os
 import queue
 import shutil
+import signal
+import socket
 import subprocess
 import sys
 import threading
 import time
+import warnings
 from logging import basicConfig, getLogger
 from typing import Callable, Optional
 
 import optuna
 import optunahub
-from optuna.storages.journal import JournalFileBackend
+from optuna.storages.journal import JournalFileBackend, JournalFileOpenLock
 
 from .ahc_settings import AHCSettings
 from .ahc_util import to_blue, to_bold, to_green
@@ -26,7 +29,8 @@ OPTIMIZER_RESULTS_SUBDIR = "optimizer_results"
 OPTUNA_JOURNAL_FILE = "optuna-journal.log"
 DEFAULT_DASHBOARD_URL = "http://localhost:8080/"
 LEGACY_POSTGRES_DB_PREFIX = "ahclib_optuna_"
-DASHBOARD_STARTUP_TIMEOUT_SEC = 15
+DASHBOARD_STARTUP_TIMEOUT_SEC = 30
+OPTIMIZER_SHUTDOWN_TIMEOUT_SEC = 10
 
 
 def _configure_logging() -> None:
@@ -49,9 +53,132 @@ def _journal_path() -> str:
 
 def _build_storage() -> optuna.storages.JournalStorage:
     """全 study で共有するローカル JournalStorage を返す"""
+    journal_path = _journal_path()
     return optuna.storages.JournalStorage(
-        JournalFileBackend(file_path=_journal_path())
+        JournalFileBackend(
+            file_path=journal_path,
+            lock_obj=JournalFileOpenLock(journal_path),
+        )
     )
+
+
+def _call_without_experimental_warning(factory: Callable, *args, **kwargs):
+    """Optunaの採用済みexperimental APIについて重複warningを抑えて生成する"""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", optuna.exceptions.ExperimentalWarning)
+        return factory(*args, **kwargs)
+
+
+def _load_or_create_study(
+    *,
+    study_name: str,
+    direction: str,
+    storage: optuna.storages.BaseStorage,
+    sampler,
+    pruner,
+) -> optuna.Study:
+    """既存studyは静かにloadし、存在しない場合だけ新規作成する"""
+    try:
+        return optuna.load_study(
+            study_name=study_name,
+            storage=storage,
+            sampler=sampler,
+            pruner=pruner,
+        )
+    except KeyError:
+        try:
+            return optuna.create_study(
+                direction=direction,
+                study_name=study_name,
+                storage=storage,
+                sampler=sampler,
+                pruner=pruner,
+            )
+        except optuna.exceptions.DuplicatedStudyError:
+            # 別の起動プロセスが同時にstudyを作った場合にも対応する。
+            return optuna.load_study(
+                study_name=study_name,
+                storage=storage,
+                sampler=sampler,
+                pruner=pruner,
+            )
+
+
+def _set_trial_worker_attr(trial: optuna.trial.Trial) -> None:
+    """強制終了後にorphan trialを判定できる最小限のworker情報を保存する"""
+    trial.set_user_attr(
+        "ahclib_worker",
+        {"hostname": socket.gethostname(), "pid": os.getpid()},
+    )
+
+
+def _would_update_best(study: optuna.Study, value: float) -> bool:
+    """途中推定値をCOMPLETEにした場合にbestを更新するか判定する"""
+    try:
+        best_value = study.best_value
+    except ValueError:
+        # WilcoxonPrunerは比較対象がなければ通常pruneしないが、並列実行中の
+        # 境界ケースでは公式例と同様に推定値を返せるようにする。
+        return False
+    if study.direction == optuna.study.StudyDirection.MAXIMIZE:
+        return value > best_value
+    return value < best_value
+
+
+def _is_process_alive(pid: int) -> bool:
+    """同一Linuxホスト上でpidが存在するかを副作用なく確認する"""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OSError):
+        # 判定不能な場合はactive processを誤って回収しない側へ倒す。
+        return True
+    return True
+
+
+def _recover_orphaned_trials(study: optuna.Study) -> None:
+    """終了済みahclib workerが残したRUNNING trialだけをFAILへ戻す"""
+    hostname = socket.gethostname()
+    recovered_numbers: list[int] = []
+    unknown_numbers: list[int] = []
+    running_trials = study.get_trials(
+        deepcopy=False,
+        states=(optuna.trial.TrialState.RUNNING,),
+    )
+    for trial in running_trials:
+        worker = trial.user_attrs.get("ahclib_worker")
+        if not isinstance(worker, dict) or worker.get("hostname") != hostname:
+            unknown_numbers.append(trial.number)
+            continue
+        try:
+            pid = int(worker["pid"])
+        except (KeyError, TypeError, ValueError):
+            unknown_numbers.append(trial.number)
+            continue
+        if pid <= 0:
+            unknown_numbers.append(trial.number)
+            continue
+        if _is_process_alive(pid):
+            continue
+        study.tell(
+            trial.number,
+            state=optuna.trial.TrialState.FAIL,
+            skip_if_finished=True,
+        )
+        recovered_numbers.append(trial.number)
+
+    if recovered_numbers:
+        logger.warning(
+            "Recovered orphaned RUNNING trials as FAIL: %s",
+            ", ".join(map(str, recovered_numbers)),
+        )
+    if unknown_numbers:
+        logger.warning(
+            "RUNNING trials without verifiable ahclib worker metadata were left "
+            "unchanged: %s",
+            ", ".join(map(str, unknown_numbers)),
+        )
 
 
 def _migrate_legacy_postgres_studies(
@@ -125,51 +252,95 @@ def _start_dashboard() -> subprocess.Popen:
         executable = os.path.join(
             os.path.dirname(sys.executable), f"optuna-dashboard{suffix}"
         )
+    logger.info("- dashboard     : starting ...")
     process = subprocess.Popen(
-        [executable, journal_path],
+        # gunicorn backendは"Listening on"を出力しないため、WSL/Ubuntuで
+        # gunicornの有無に左右されないwsgirefへ固定する。
+        [executable, journal_path, "--server", "wsgiref"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
         bufsize=1,
     )
     stderr_lines: queue.Queue[Optional[str]] = queue.Queue()
+    startup_finished = threading.Event()
 
     def _read_stderr() -> None:
         assert process.stderr is not None
         for line in process.stderr:
-            stderr_lines.put(line.rstrip())
-        stderr_lines.put(None)
+            # 起動判定後もpipeは読み続けるが、不要なrequest logをqueueへ
+            # 蓄積しない。
+            if not startup_finished.is_set():
+                stderr_lines.put(line.rstrip())
+        if not startup_finished.is_set():
+            stderr_lines.put(None)
 
     threading.Thread(target=_read_stderr, daemon=True).start()
-    deadline = time.monotonic() + DASHBOARD_STARTUP_TIMEOUT_SEC
-    dashboard_url = None
-    startup_messages: list[str] = []
-    while time.monotonic() < deadline:
-        try:
-            line = stderr_lines.get(timeout=0.1)
-        except queue.Empty:
-            if process.poll() is not None:
+    try:
+        deadline = time.monotonic() + DASHBOARD_STARTUP_TIMEOUT_SEC
+        dashboard_url = None
+        startup_messages: list[str] = []
+        while time.monotonic() < deadline:
+            try:
+                line = stderr_lines.get(timeout=0.1)
+            except queue.Empty:
+                if process.poll() is not None:
+                    break
+                continue
+            if line is None:
                 break
-            continue
-        if line is None:
-            break
-        startup_messages.append(line)
-        if line.startswith("Listening on "):
-            dashboard_url = line.removeprefix("Listening on ").strip()
-            break
+            startup_messages.append(line)
+            if line.startswith("Listening on "):
+                dashboard_url = line.removeprefix("Listening on ").strip()
+                break
 
-    if dashboard_url is not None:
-        logger.info(f"- dashboard URL : {to_bold(dashboard_url)}")
-    elif process.poll() is not None:
-        detail = "\n".join(startup_messages) or "no error output"
-        raise RuntimeError(f"Optuna Dashboard failed to start: {detail}")
-    else:
-        logger.warning(
-            "Dashboard startup could not be confirmed within %s seconds; expected URL: %s",
-            DASHBOARD_STARTUP_TIMEOUT_SEC,
-            DEFAULT_DASHBOARD_URL,
-        )
-    return process
+        if dashboard_url is not None:
+            logger.info(f"- dashboard URL : {to_bold(dashboard_url)}")
+        elif process.poll() is not None:
+            detail = "\n".join(startup_messages) or "no error output"
+            raise RuntimeError(f"Optuna Dashboard failed to start: {detail}")
+        else:
+            logger.warning(
+                "Dashboard startup could not be confirmed within %s seconds; "
+                "continuing with expected URL: %s",
+                DASHBOARD_STARTUP_TIMEOUT_SEC,
+                DEFAULT_DASHBOARD_URL,
+            )
+        return process
+    except BaseException:
+        _stop_dashboard(process)
+        raise
+    finally:
+        startup_finished.set()
+
+
+def _stop_optimizer_processes(
+    optimizer_processes: list[multiprocessing.Process],
+) -> None:
+    """子sessionへ正常終了の機会を与え、残ったprocessだけを強制終了する"""
+    # Process.start()が途中で失敗した場合、未起動processはjoinできない。
+    started_processes = [p for p in optimizer_processes if p.pid is not None]
+    alive_processes = [p for p in started_processes if p.is_alive()]
+    for optimizer_process in alive_processes:
+        # 子側では SIGTERM を KeyboardInterrupt に変換するため、Optuna が
+        # 実行中 trial を FAIL に確定してから終了できる。
+        optimizer_process.terminate()
+
+    deadline = time.monotonic() + OPTIMIZER_SHUTDOWN_TIMEOUT_SEC
+    for optimizer_process in alive_processes:
+        optimizer_process.join(timeout=max(0.0, deadline - time.monotonic()))
+
+    for optimizer_process in alive_processes:
+        if optimizer_process.is_alive():
+            logger.warning(
+                "Force-killing optimizer session %s after %.0f seconds.",
+                optimizer_process.name,
+                OPTIMIZER_SHUTDOWN_TIMEOUT_SEC,
+            )
+            optimizer_process.kill()
+
+    for optimizer_process in started_processes:
+        optimizer_process.join()
 
 
 def _stop_dashboard(process: subprocess.Popen) -> None:
@@ -227,6 +398,16 @@ class Optimizer:
         return max(1, min(requested, available))
 
     @staticmethod
+    def _split_trials(total_trials: int, worker_count: int) -> list[int]:
+        """総 trial 数を worker 間で均等に分配する"""
+        quotient, remainder = divmod(total_trials, worker_count)
+        return [
+            quotient + (1 if worker_id < remainder else 0)
+            for worker_id in range(worker_count)
+            if quotient + (1 if worker_id < remainder else 0) > 0
+        ]
+
+    @staticmethod
     def _as_execute_args(args) -> tuple:
         return tuple(args)
 
@@ -248,6 +429,7 @@ class Optimizer:
         start = time.time()
 
         def _objective(trial: optuna.trial.Trial) -> float:
+            _set_trial_worker_attr(trial)
             tester: ParallelTester = build_tester(
                 self.settings,
                 njobs=self.settings.njobs,
@@ -262,6 +444,7 @@ class Optimizer:
             return tester.get_score(scores)
 
         def _objective_wilcoxon_pruner(trial: optuna.trial.Trial) -> float:
+            _set_trial_worker_attr(trial)
             tester: ParallelTester = build_tester(
                 self.settings,
                 njobs=self.settings.njobs,
@@ -277,8 +460,9 @@ class Optimizer:
             trial.set_user_attr("ahclib_evaluated_cases", result.completed_count)
             trial.set_user_attr("ahclib_wilcoxon_stopped", result.pruned)
 
-            # WilcoxonPruner では、途中結果を TrialPruned として捨てず、
-            # 完了済み instance から推定した最終値を返すことが推奨されている。
+            # 原則は完了済みinstanceから推定した値を返し、途中評価の情報を
+            # samplerへ残す。ただし推定値がbestを更新してしまう場合だけは、
+            # 未評価instanceを含むtrialがbestにならないようPRUNEDにする。
             score = tester.get_score(completed_scores)
             if result.pruned:
                 width = len(str(len(result.scores)))
@@ -289,6 +473,10 @@ class Optimizer:
                         f"{len(result.scores)} | estimated score: {score}"
                     )
                 )
+                if _would_update_best(trial.study, score):
+                    raise optuna.TrialPruned(
+                        "Wilcoxon-stopped estimate would update the best value."
+                    )
             return score
 
         storage = _build_storage()
@@ -296,44 +484,116 @@ class Optimizer:
         objective_func: Callable[[optuna.trial.Trial], float] = _objective
 
         optuna_seed = self.settings.optuna_seed
+        auto_sampler_class = None
         if sampler == "auto_sampler":
-            optuna_sampler = optunahub.load_module("samplers/auto_sampler").AutoSampler(
-                seed=optuna_seed
-            )
+            auto_sampler_class = _call_without_experimental_warning(
+                optunahub.load_module,
+                "samplers/auto_sampler",
+            ).AutoSampler
         else:
             sampler = "TPESampler"
-            optuna_sampler = optuna.samplers.TPESampler(
+
+        def _make_sampler(worker_id: int):
+            worker_seed = (
+                None if optuna_seed is None else optuna_seed + worker_id
+            )
+            if auto_sampler_class is not None:
+                return _call_without_experimental_warning(
+                    auto_sampler_class,
+                    seed=worker_seed,
+                )
+            return _call_without_experimental_warning(
+                optuna.samplers.TPESampler,
                 multivariate=True,
                 n_startup_trials=self.settings.optuna_n_startup_trials,
-                seed=optuna_seed,
+                seed=worker_seed,
             )
-        logger.info(f"- sampler       : {to_bold(sampler)}")
 
-        optuna_pruner = None
+        def _make_pruner():
+            if pruner == "WilcoxonPruner":
+                return _call_without_experimental_warning(
+                    optuna.pruners.WilcoxonPruner,
+                    p_threshold=0.1,
+                )
+            return None
+
+        logger.info(f"- sampler       : {to_bold(sampler)}")
         if pruner == "WilcoxonPruner":
             logger.info(f"- pruner        : {to_bold(pruner)}")
-            optuna_pruner = optuna.pruners.WilcoxonPruner(p_threshold=0.1)
             objective_func = _objective_wilcoxon_pruner
 
-        study: optuna.Study = optuna.create_study(
-            direction=self.settings.direction,
+        study = _load_or_create_study(
             study_name=self.settings.study_name,
+            direction=self.settings.direction,
             storage=storage,
-            load_if_exists=True,
-            sampler=optuna_sampler,
-            pruner=optuna_pruner,
+            sampler=_make_sampler(0),
+            pruner=_make_pruner(),
         )
+        _recover_orphaned_trials(study)
 
         initial_trial_count = len(study.trials)
         for params in self.settings.optuna_init_trials:
             study.enqueue_trial(params, skip_if_exists=True)
 
-        process: Optional[subprocess.Popen] = None
+        worker_count = min(
+            self._max_optuna_workers(self.settings.njobs_optuna),
+            max(1, self.settings.n_trials),
+        )
+        trials_per_worker = self._split_trials(
+            self.settings.n_trials, worker_count
+        )
+        logger.info(f"- opt sessions  : {to_bold(len(trials_per_worker))}")
+
+        def _run_optimization_session(
+            worker_id: int,
+            session_trials: int,
+            is_child_process: bool = False,
+        ) -> None:
+            if is_child_process:
+                # Ctrl-C は親だけで受け、親からの terminate(SIGTERM) を
+                # KeyboardInterrupt としてOptunaへ渡す。n_jobs=1 のため
+                # 実行中trialはFAILへ正常に遷移する。
+                signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+                def _handle_terminate(_signum, _frame) -> None:
+                    # OptunaはKeyboardInterruptでtrialを正しくFAILへ更新するが、
+                    # 既知の終了操作についてもstack traceをWARNING出力する。
+                    # 子processはこのまま終了するため、ここだけ抑制する。
+                    optuna.logging.set_verbosity(optuna.logging.ERROR)
+                    raise KeyboardInterrupt
+
+                signal.signal(signal.SIGTERM, _handle_terminate)
+
+            session_label = f"{worker_id + 1}/{len(trials_per_worker)}"
+            try:
+                session_study = optuna.load_study(
+                    study_name=self.settings.study_name,
+                    storage=_build_storage(),
+                    sampler=_make_sampler(worker_id),
+                    pruner=_make_pruner(),
+                )
+                logger.info(
+                    "Optuna session %s started (%s trials).",
+                    session_label,
+                    session_trials,
+                )
+                session_study.optimize(
+                    objective_func,
+                    n_trials=session_trials,
+                    timeout=optuna_timeout,
+                    n_jobs=1,
+                )
+                logger.info("Optuna session %s finished.", session_label)
+            except KeyboardInterrupt:
+                logger.info("Optuna session %s interrupted.", session_label)
+                if not is_child_process:
+                    raise
+
+        dashboard_process: Optional[subprocess.Popen] = None
+        optimizer_processes: list[multiprocessing.Process] = []
         try:
             logger.info("------------------------------------------")
             _log_studies(storage)
-            process = _start_dashboard()
-            logger.info("==============================================")
 
             tester: ParallelTester = build_tester(
                 self.settings,
@@ -341,11 +601,51 @@ class Optimizer:
                 verbose=False,
             )
             tester.compile()
-            study.optimize(
-                objective_func,
-                n_trials=self.settings.n_trials,
-                timeout=optuna_timeout,
-                n_jobs=self._max_optuna_workers(self.settings.njobs_optuna),
+
+            if len(trials_per_worker) > 1:
+                if "fork" not in multiprocessing.get_all_start_methods():
+                    raise RuntimeError(
+                        "Multi-session optimization requires the multiprocessing "
+                        "'fork' start method."
+                    )
+                ctx = multiprocessing.get_context("fork")
+                optimizer_processes = [
+                    ctx.Process(
+                        target=_run_optimization_session,
+                        args=(worker_id, session_trials, True),
+                        name=f"ahclib-opt-{worker_id}",
+                    )
+                    for worker_id, session_trials in enumerate(trials_per_worker)
+                ]
+                # Dashboard の stderr reader thread を作る前に fork する。
+                for optimizer_process in optimizer_processes:
+                    optimizer_process.start()
+
+            dashboard_process = _start_dashboard()
+            logger.info("==============================================")
+
+            if len(trials_per_worker) == 1:
+                _run_optimization_session(0, trials_per_worker[0])
+            else:
+                for optimizer_process in optimizer_processes:
+                    optimizer_process.join()
+                failed_processes = [
+                    optimizer_process
+                    for optimizer_process in optimizer_processes
+                    if optimizer_process.exitcode != 0
+                ]
+                if failed_processes:
+                    details = ", ".join(
+                        f"{p.name} (exit={p.exitcode})" for p in failed_processes
+                    )
+                    raise RuntimeError(f"Optimizer session failed: {details}")
+
+            # 子プロセスが追記した journal を新しい storage instance で再読込する。
+            study = optuna.load_study(
+                study_name=self.settings.study_name,
+                storage=_build_storage(),
+                sampler=_make_sampler(0),
+                pruner=_make_pruner(),
             )
 
             try:
@@ -372,12 +672,17 @@ class Optimizer:
             )
             _wait_for_dashboard_close()
 
+        except KeyboardInterrupt:
+            logger.warning("Optimization interrupted; stopping all sessions ...")
+            # tracebackを表示せず、シェルには一般的な割り込み終了コードを返す。
+            raise SystemExit(130)
         except Exception:
             logger.exception("Optimizer failed.")
             raise
         finally:
-            if process is not None:
-                _stop_dashboard(process)
+            _stop_optimizer_processes(optimizer_processes)
+            if dashboard_process is not None:
+                _stop_dashboard(dashboard_process)
 
     def _copy_snapshot(self, source: Optional[str], output_dir: str) -> None:
         if not source or not os.path.isfile(source):
@@ -483,7 +788,13 @@ class Optimizer:
 def run_optimizer(settings: AHCSettings, sampler=None, pruner=None) -> None:
     _configure_logging()
     optimizer = Optimizer(settings)
-    optimizer.optimize(sampler, pruner)
+    try:
+        optimizer.optimize(sampler, pruner)
+    except KeyboardInterrupt:
+        # storage初期化中など、Optimizer内部のmain tryより前の割り込みも
+        # tracebackなしで終了させる。
+        logger.warning("Optimization interrupted.")
+        raise SystemExit(130)
 
 
 if __name__ == "__main__":

@@ -62,6 +62,8 @@ Optuna を用いたパラメータ探索
 全 study は ``./ahclib_results/optimizer_results/optuna-journal.log`` に保存される。
 同じ storage を共有するため、Dashboard の study 一覧から別の ``study_name`` も表示できる。
 旧版が作成した ``ahclib_optuna_*`` PostgreSQL database がローカルにある場合は、未登録の study を journal へ非破壊でコピーする。
+``Ctrl-C`` では実行中 solver と optimizer session を順に停止し、実行中 trial を ``FAIL`` として確定する。
+強制終了などでworkerだけが先に消えた場合も、worker情報を持つ孤立 ``RUNNING`` trial は次回起動時に ``FAIL`` へ回収する。
 
 最適化終了時には ``./ahclib_results/optimizer_results/<study_name>/`` に以下を保存する。
 
@@ -75,7 +77,9 @@ Optuna を用いたパラメータ探索
 ``WilcoxonPruner`` は各ケースの score を、そのケースの固定 ID を step として ``trial.report`` する。
 評価順は trial ごとにシャッフルされる。``should_prune()`` が真になった場合、実行中 solver を終了し、
 完了済みケースから ``get_score`` で推定した目的値を返す。この挙動は WilcoxonPruner の推奨方法に合わせたもので、
-途中停止の有無と評価ケース数は ``ahclib_wilcoxon_stopped`` / ``ahclib_evaluated_cases`` user attribute に記録される。
+ただし推定値が現在の best を更新する場合は、未評価ケースを含む trial が best になることを防ぐため
+``TrialPruned`` とする。途中停止の有無と評価ケース数は ``ahclib_wilcoxon_stopped`` /
+``ahclib_evaluated_cases`` user attribute に記録される。
 
 
 設定ファイル
@@ -157,7 +161,8 @@ Optuna を用いたパラメータ探索用の設定
 * Journal storage
 
   - ``ahclib_results`` 以下のローカルファイルへ最適化履歴を保存する
-  - 同一ホスト上のスレッド・プロセス並列に対応する
+  - 同一ホスト上の複数 optimizer process から共有する
+  - WSL の ``/mnt/c`` と Linux/Ubuntu のローカル filesystem の両方で、symbolic link に依存しない lock file を使用する
   - PostgreSQL のセットアップは不要
 
 * ``direction``
@@ -171,9 +176,12 @@ Optuna を用いたパラメータ探索用の設定
   - ``None`` の場合は時間制限なし
   - ``n_trials`` と ``optuna_timeout`` のどちらか先に到達した時点で終了する
 
-* optuna のスレッド数 (``njobs_optuna``)
+* Optuna session 数 (``njobs_optuna``)
 
-  - ``min(njobs_optuna, cpu_count - 1)`` がとられる
+  - ``min(njobs_optuna, cpu_count - 1, n_trials)`` 個の独立 process を起動する
+  - 各 process は同じ study と JournalStorage を共有し、``n_jobs=1`` で最適化する
+  - ``n_trials`` は process 間に分配され、全 process の合計試行回数になる
+  - sessionごとの開始・終了を番号付きで表示し、同じ初期化messageは繰り返さない
 
 * シード (``optuna_seed``)
 

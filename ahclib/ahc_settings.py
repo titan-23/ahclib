@@ -43,7 +43,7 @@ class AHCSettings:
     # optuna の実行時間制限 [min]
     optuna_timeout = None
 
-    # optuna の cpu_count
+    # 独立して study.optimize を実行する Optuna session (process) 数
     njobs_optuna = 1
 
     @staticmethod
