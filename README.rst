@@ -24,7 +24,7 @@ AHC Lib
 並列実行
 ~~~~~~~~~~~~~~~~~~
 
-``njobs`` 数のスレッドを立ち上げて実行します。結果を記録した csv ファイルと実行ソースファイルが ``./ahclib_results/`` ディレクトリに保存されます
+``njobs`` 数のスレッドを立ち上げて実行します。結果を記録した csv ファイルと実行ソースファイルが ``./ahclib_results/all_tests/YYYY_MM_DD_HH_MM_SS/`` に保存され、実行後に保存先が表示されます
 
 コマンドは以下です
 
@@ -51,11 +51,31 @@ Optuna を用いたパラメータ探索
 .. code-block:: shell
 
     python3 -m ahclib opt [--no-wilcoxon] [-a]
+    python3 -m ahclib opt --vis
 
 **オプション**
 
 - ``--no-wilcoxon`` : ``WilcoxonPruner`` を無効にする。既定では有効
 - ``-a``, ``--auto_sampler`` : ``auto_sampler`` を使う。指定しないときは ``TPESampler`` を使う
+- ``--vis`` : 最適化やコンパイルを行わず、保存済み study の Optuna Dashboard だけを起動する
+
+全 study は ``./ahclib_results/optimizer_results/optuna-journal.log`` に保存される。
+同じ storage を共有するため、Dashboard の study 一覧から別の ``study_name`` も表示できる。
+旧版が作成した ``ahclib_optuna_*`` PostgreSQL database がローカルにある場合は、未登録の study を journal へ非破壊でコピーする。
+
+最適化終了時には ``./ahclib_results/optimizer_results/<study_name>/`` に以下を保存する。
+
+- ``result.txt`` : best trial
+- ``trials.csv`` : 全 trial の値、parameter、user attribute
+- ``study.json`` : best trial、trial state の件数、直近実行の設定
+- ``images/`` : Optuna のグラフ
+- solver source と使用した settings file のスナップショット
+- ``runs/<timestamp>/`` : 各 optimizer 実行時点の ``result.txt``、``trials.csv``、``study.json``、source/settings
+
+``WilcoxonPruner`` は各ケースの score を、そのケースの固定 ID を step として ``trial.report`` する。
+評価順は trial ごとにシャッフルされる。``should_prune()`` が真になった場合、実行中 solver を終了し、
+完了済みケースから ``get_score`` で推定した目的値を返す。この挙動は WilcoxonPruner の推奨方法に合わせたもので、
+途中停止の有無と評価ケース数は ``ahclib_wilcoxon_stopped`` / ``ahclib_evaluated_cases`` user attribute に記録される。
 
 
 設定ファイル
@@ -131,15 +151,14 @@ Optuna を用いたパラメータ探索用の設定
 
 * ``study_name``
 
-  - ``study_name`` から PostgreSQL のデータベース名が自動生成される
-  - 例: ``study_name = "test"`` なら ``ahclib_optuna_test``
+  - 全 study が ``./ahclib_results/optimizer_results/optuna-journal.log`` を共有する
   - 既に同名の study がある場合、その study が利用される
 
-* PostgreSQL storage
+* Journal storage
 
-  - ローカル PostgreSQL を利用する
-  - optimizer 実行時に study 用データベースが存在しなければ自動作成される
-  - 現在の OS ユーザーが ``postgres`` データベースへ接続でき、データベース作成権限を持つ必要がある
+  - ``ahclib_results`` 以下のローカルファイルへ最適化履歴を保存する
+  - 同一ホスト上のスレッド・プロセス並列に対応する
+  - PostgreSQL のセットアップは不要
 
 * ``direction``
 
@@ -158,7 +177,7 @@ Optuna を用いたパラメータ探索用の設定
 
 * シード (``optuna_seed``)
 
-  - sampler のシードと、``WilcoxonPruner`` 使用時の入力順シャッフルのシードに使われる
+  - sampler のシードと、``WilcoxonPruner`` 使用時の trial ごとの入力順シャッフルの基準 seed に使われる
   - ``None`` も指定できる
 
 * ランダム探索の試行回数 (``optuna_n_startup_trials``)

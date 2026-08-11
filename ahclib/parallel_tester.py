@@ -14,6 +14,7 @@ from random import Random
 import shutil
 import csv
 import re
+import signal
 import threading
 import optuna
 import datetime
@@ -37,6 +38,7 @@ ERR_SUBDIR = "err"
 OUT_SUBDIR = "out"
 LOCAL_OUT_DIR = "./out/"
 SETTINGS_FILE = "ahc_settings.py"
+RESULT_DIR_DATETIME_FORMAT = "%Y_%m_%d_%H_%M_%S"
 
 # --- CSV ---
 CSV_HEADERS_REL = ["filename", "score", "rel_score", "state", "time"]
@@ -46,6 +48,10 @@ SolverState = Literal["AC", "TLE", "ERROR", "INNER_ERROR"]
 Direction = Literal["minimize", "maximize"]
 Score = Union[int, float]
 CaseResult = tuple[str, Score, float, SolverState, str]
+
+# prune 判定後、実行中 solver が終了するまで待たないための監視間隔と終了猶予
+PRUNER_CANCEL_POLL_SEC = 0.05
+PROCESS_TERMINATE_GRACE_SEC = 0.5
 
 # 並列実行は subprocess での外部プロセス起動が主体なので
 # GIL の影響を受けにくく ThreadPoolExecutor で十分
@@ -66,6 +72,18 @@ class WorkerState:
     rel_good_cnt: int = 0
     rel_same_cnt: int = 0
     rel_bad_cnt: int = 0
+
+
+@dataclass(frozen=True)
+class PrunerRunResult:
+    """pruner 用ケース実行の結果"""
+
+    scores: list[Optional[float]]
+    pruned: bool
+
+    @property
+    def completed_count(self) -> int:
+        return sum(score is not None for score in self.scores)
 
 
 def _decode_proc_output(s: Union[str, bytes, None]) -> str:
@@ -118,6 +136,97 @@ def _execute_solver(
     except subprocess.CalledProcessError as e:
         return "ERROR", math.nan, e.stdout or "", e.stderr or "", -1.0
     except Exception as e:
+        logger.exception(e)
+        return "INNER_ERROR", math.nan, "", "", -1.0
+
+
+def _terminate_process(
+    process: subprocess.Popen,
+) -> tuple[str, str]:
+    """solver とその子プロセスを終了し、残っている標準出力・標準エラーを返す"""
+    if process.poll() is None:
+        try:
+            if os.name == "posix":
+                os.killpg(process.pid, signal.SIGTERM)
+            else:
+                process.terminate()
+        except OSError:
+            pass
+
+    try:
+        stdout, stderr = process.communicate(timeout=PROCESS_TERMINATE_GRACE_SEC)
+    except subprocess.TimeoutExpired:
+        try:
+            if os.name == "posix":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+        except OSError:
+            pass
+        stdout, stderr = process.communicate()
+    return stdout or "", stderr or ""
+
+
+def _execute_solver_cancellable(
+    input_file: str,
+    cmd: list[str],
+    timeout: Optional[float],
+    is_int: bool,
+    cancel_event: threading.Event,
+) -> Optional[tuple[SolverState, Score, str, str, float]]:
+    """pruner 用に solver を実行する。cancel 時はプロセスを終了して ``None`` を返す"""
+    if cancel_event.is_set():
+        return None
+
+    with open(input_file, "r", encoding="utf-8") as f:
+        input_text = f.read()
+
+    process: Optional[subprocess.Popen] = None
+    start = time.perf_counter()
+    try:
+        process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=(os.name == "posix"),
+        )
+        communicate_input: Optional[str] = input_text
+
+        while True:
+            if cancel_event.is_set():
+                _terminate_process(process)
+                return None
+
+            elapsed = time.perf_counter() - start
+            remaining = None if timeout is None else timeout - elapsed
+            if remaining is not None and remaining <= 0:
+                stdout, stderr = _terminate_process(process)
+                return "TLE", math.nan, stdout, stderr, timeout
+
+            wait_sec = PRUNER_CANCEL_POLL_SEC
+            if remaining is not None:
+                wait_sec = min(wait_sec, remaining)
+
+            try:
+                stdout, stderr = process.communicate(
+                    input=communicate_input,
+                    timeout=wait_sec,
+                )
+            except subprocess.TimeoutExpired:
+                # 最初の communicate が input を保持するため、再送しない。
+                communicate_input = None
+                continue
+
+            elapsed = time.perf_counter() - start
+            if process.returncode != 0:
+                return "ERROR", math.nan, stdout or "", stderr or "", -1.0
+            score = _extract_last_score(stderr or "", is_int)
+            return "AC", score, stdout or "", stderr or "", elapsed
+    except Exception as e:
+        if process is not None and process.poll() is None:
+            _terminate_process(process)
         logger.exception(e)
         return "INNER_ERROR", math.nan, "", "", -1.0
 
@@ -274,9 +383,19 @@ def _run_case_for_opt(
     is_int: bool,
     use_relative_score: bool,
     pre_data: dict[str, float],
-) -> float:
+    cancel_event: Optional[threading.Event] = None,
+) -> Optional[float]:
     """1ケース実行しスコアを返す (Optuna 用) 失敗時は nan"""
-    state, score, _, _, _ = _execute_solver(input_file, cmd, timeout, is_int)
+    if cancel_event is None:
+        result = _execute_solver(input_file, cmd, timeout, is_int)
+    else:
+        result = _execute_solver_cancellable(
+            input_file, cmd, timeout, is_int, cancel_event
+        )
+        if result is None:
+            return None
+
+    state, score, _, _, _ = result
     if state != "AC":
         _log_solver_error(input_file, state)
         return math.nan
@@ -285,10 +404,25 @@ def _run_case_for_opt(
     return score
 
 
-def _worker_process_file_opt_pruner(args) -> tuple[int, float]:
-    input_file, id_, cmd, timeout, is_int, use_relative_score, pre_data = args
+def _worker_process_file_opt_pruner(args) -> tuple[int, Optional[float]]:
+    (
+        input_file,
+        id_,
+        cmd,
+        timeout,
+        is_int,
+        use_relative_score,
+        pre_data,
+        cancel_event,
+    ) = args
     score = _run_case_for_opt(
-        input_file, cmd, timeout, is_int, use_relative_score, pre_data
+        input_file,
+        cmd,
+        timeout,
+        is_int,
+        use_relative_score,
+        pre_data,
+        cancel_event,
     )
     return id_, score
 
@@ -296,9 +430,11 @@ def _worker_process_file_opt_pruner(args) -> tuple[int, float]:
 def _worker_process_file_light(args) -> float:
     """入力 `input_file` を処理する (軽量版)"""
     input_file, cmd, timeout, is_int, use_relative_score, pre_data = args
-    return _run_case_for_opt(
+    score = _run_case_for_opt(
         input_file, cmd, timeout, is_int, use_relative_score, pre_data
     )
+    assert score is not None
+    return score
 
 
 def _increment_counter(state: WorkerState) -> int:
@@ -499,8 +635,9 @@ class ParallelTester:
             df = pd.read_csv(pre_csv)
             self.pre_data = dict(zip(df["filename"], df["score"]))
 
-        # `self.rnd` は run_opt_pruner で入力順をシャッフルするのに使う
-        self.rnd = Random(optuna_seed)
+        # trial ごとに異なる再現可能な入力順を作るための基準 seed
+        self.optuna_seed = optuna_seed
+        self.last_output_dir: Optional[str] = None
 
     def show_score(self, scores: list[float]) -> float:
         """スコアのリストを受け取り `get_score` 関数で計算する ついでに表示もする"""
@@ -540,15 +677,21 @@ class ParallelTester:
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             return list(executor.map(worker_func, args_list))
 
-    def run_opt_pruner(self, trial: optuna.trial.Trial) -> list[Optional[float]]:
+    def run_opt_pruner(self, trial: optuna.trial.Trial) -> PrunerRunResult:
         """Optuna trial 用に並列実行し pruner が `should_prune` を返したら打ち切る
 
         Returns:
-            各ケースのスコアリスト 打ち切られたケースは `None` のまま残る
+            各ケースのスコアリストと打ち切りの有無。未完了ケースは `None`
         """
         scores_list: list[Optional[float]] = [None] * len(self.input_file_names)
         input_filenames = list(enumerate(self.input_file_names))
-        self.rnd.shuffle(input_filenames)
+        shuffle_seed = (
+            None
+            if self.optuna_seed is None
+            else self.optuna_seed + trial.number
+        )
+        Random(shuffle_seed).shuffle(input_filenames)
+        cancel_event = threading.Event()
 
         cmd = self.execute_command + self.added_command
         args_list = [
@@ -560,12 +703,14 @@ class ParallelTester:
                 self.is_int,
                 self.use_relative_score,
                 self.pre_data,
+                cancel_event,
             )
             for id_, file in input_filenames
         ]
 
         max_workers = max(1, self.cpu_count)
         args_iter = iter(args_list)
+        pruned = False
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures: dict = {}
             for _ in range(max_workers):
@@ -580,18 +725,24 @@ class ParallelTester:
                 for future in done:
                     futures.pop(future)
                     id_, score = future.result()
+                    if score is None:
+                        continue
                     trial.report(score, id_)
                     scores_list[id_] = score
                     if trial.should_prune():
-                        # 注: 実行中の future は cancel しても止まらない
-                        #     まだ実行開始されていないものだけ取り消せる
+                        pruned = True
+                        # future.cancel() では走行中の solver は止まらないため、
+                        # event を通じて各 worker が subprocess を終了する。
+                        cancel_event.set()
                         for pending in futures:
                             pending.cancel()
-                        return scores_list
+                        break
                     _submit_next(
                         executor, args_iter, futures, _worker_process_file_opt_pruner
                     )
-        return scores_list
+                if pruned:
+                    break
+        return PrunerRunResult(scores=scores_list, pruned=pruned)
 
     def run(self) -> list[float]:
         """全ケースを並列実行しスコアリストだけ返す (ログ・記録なし)"""
@@ -613,7 +764,9 @@ class ParallelTester:
         """タイムスタンプ付きの出力ディレクトリを作って返す 既存なら例外"""
         dt_now = datetime.datetime.now()
         output_dir = os.path.join(
-            RESULTS_DIR, ALL_TESTS_SUBDIR, dt_now.strftime("%Y-%m-%d_%H-%M-%S")
+            RESULTS_DIR,
+            ALL_TESTS_SUBDIR,
+            dt_now.strftime(RESULT_DIR_DATETIME_FORMAT),
         )
         if os.path.exists(output_dir):
             logger.error(
@@ -680,6 +833,7 @@ class ParallelTester:
     def run_record(self, record: bool, memo: Optional[str] = None) -> list[CaseResult]:
         """全ケースを並列実行し CSV と (record=True なら) 入出力ファイルも保存する"""
         output_dir = self._setup_output_dir(record)
+        self.last_output_dir = output_dir
         if memo:
             with open(
                 os.path.join(output_dir, "memo.txt"), "w", encoding="utf-8"
@@ -887,6 +1041,10 @@ def run_test(
 
     score = tester.show_score([s for _, s, _, _, _ in scores])
     logger.info(to_green(f"Finished in {time.time() - start:.4f} sec."))
+    if tester.last_output_dir is not None:
+        logger.info(
+            f"Result directory: {to_bold(to_blue(tester.last_output_dir))}"
+        )
     return score
 
 

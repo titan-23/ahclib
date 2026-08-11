@@ -24,7 +24,7 @@ def get_ahc_setting(key, default):
 
 
 def format_timestamp(ts):
-    for fmt in ("%Y-%m-%d_%H-%M-%S", "%Y%m%d_%H%M"):
+    for fmt in ("%Y_%m_%d_%H_%M_%S", "%Y%m%d_%H%M"):
         try:
             return datetime.strptime(ts, fmt).strftime("%Y/%m/%d %H:%M")
         except ValueError:

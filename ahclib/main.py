@@ -1,6 +1,6 @@
 from .parallel_tester import run_test
 from .ahc_util import to_bold, to_blue
-from .optimizer import run_optimizer
+from .optimizer import run_optimizer, run_optimizer_dashboard
 import sys
 import importlib.util
 import argparse
@@ -21,66 +21,84 @@ def load_class_from_path(file_path, class_name=None):
     return module
 
 
-def get_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "command",
-        choices=["setup", "vis", "vis_beam", "test", "opt", "clear"],
-        help="",
-    )
+def _add_settings_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "-s",
         "--settings",
         required=False,
         default="ahc_settings.py",
     )
-    parser.add_argument(
+
+
+def get_args(argv=None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    subparsers.add_parser("setup")
+    subparsers.add_parser("vis")
+    subparsers.add_parser("clear")
+
+    test_parser = subparsers.add_parser("test")
+    _add_settings_argument(test_parser)
+    test_parser.add_argument(
         "--compile",
         default=True,
         action=argparse.BooleanOptionalAction,
     )
-    parser.add_argument(
+    test_parser.add_argument(
         "--verbose",
         default=True,
         action=argparse.BooleanOptionalAction,
     )
-    parser.add_argument(
+    test_parser.add_argument(
         "--record",
         default=True,
         action=argparse.BooleanOptionalAction,
     )
-    parser.add_argument(
+    test_parser.add_argument(
         "-m",
         "--memo",
         required=False,
         default=None,
         help="test の実行結果に添えるメモ (結果ディレクトリの memo.txt に保存され vis に表示される)",
     )
-    parser.add_argument(
+
+    beam_parser = subparsers.add_parser("vis_beam")
+    beam_parser.add_argument(
         "--history",
         required=False,
         default="history.json",
         help="vis_beam で読み込む history.json のパス",
     )
-    parser.add_argument(
+    beam_parser.add_argument(
         "--vis",
+        "--visualizer",
+        dest="visualizer",
         required=False,
         default=None,
         help="vis_beam で使う visualizer.py のパス (省略時は ./visualizer.py を自動検出)",
     )
-    parser.add_argument(
+
+    opt_parser = subparsers.add_parser("opt")
+    _add_settings_argument(opt_parser)
+    opt_parser.add_argument(
+        "--vis",
+        action="store_true",
+        help="最適化を行わず、保存済み study の Optuna Dashboard だけを起動する",
+    )
+    opt_parser.add_argument(
         "--wilcoxon",
         default=True,
         action=argparse.BooleanOptionalAction,
     )
-    parser.add_argument(
+    opt_parser.add_argument(
         "-a",
         "--auto_sampler",
         required=False,
         default=False,
         action="store_true",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     return args
 
 
@@ -97,7 +115,7 @@ def main():
         from .beam.app import create_app
         from .beam.default_visualizer import generate_board_visual as _default_vis
 
-        vis_path = args.vis or os.path.join(os.getcwd(), "visualizer.py")
+        vis_path = args.visualizer or os.path.join(os.getcwd(), "visualizer.py")
         if os.path.exists(vis_path):
             vis_module = load_class_from_path(vis_path)
             generate_board_visual = getattr(
@@ -108,6 +126,10 @@ def main():
 
         beam_app = create_app(generate_board_visual, history_path=args.history)
         beam_app.run(debug=False)
+        sys.exit(0)
+
+    if args.command == "opt" and args.vis:
+        run_optimizer_dashboard()
         sys.exit(0)
 
     if args.command == "setup":

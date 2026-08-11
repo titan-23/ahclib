@@ -35,9 +35,12 @@ Compile, verbose logging, and stdout/stderr recording are all **on by default**;
 python3 -m ahclib opt              # default (WilcoxonPruner enabled)
 python3 -m ahclib opt --no-wilcoxon  # disable pruner
 python3 -m ahclib opt -a           # enable auto_sampler
+python3 -m ahclib opt --vis        # launch only the Optuna dashboard
 ```
 
-The Optuna study is stored in a **local PostgreSQL database** named `ahclib_optuna_<study_name>`, created automatically if absent. The `./ahclib_results/optimizer_results/<study_name>/` directory holds the output (`result.txt` and plot images), not the study DB. An `optuna-dashboard` process is launched automatically and its URL is logged.
+All Optuna studies share the local JournalStorage file `./ahclib_results/optimizer_results/optuna-journal.log`, so the dashboard lists every study. Legacy studies in local `ahclib_optuna_*` PostgreSQL databases are copied into the journal non-destructively when found. The `./ahclib_results/optimizer_results/<study_name>/` directory holds the latest `result.txt`, `trials.csv`, `study.json`, plots, and source/settings snapshots; `runs/<timestamp>/` archives each optimizer run. An `optuna-dashboard` process is launched automatically and its URL is logged.
+
+For `WilcoxonPruner`, each case score is reported with its stable case ID as the step, while case order is shuffled per trial. When pruning is requested, running solver subprocesses are terminated cooperatively and the objective returns the aggregate of completed cases, as recommended for this pruner. The early-stop flag and evaluated case count are stored in trial user attributes.
 
 ### Launch dashboards
 
@@ -69,7 +72,7 @@ All per-contest settings live in the `AHCSettings` class:
 | `use_relative_score` | Compute and report relative scores in the log and CSV |
 | `pre_dir_name` | Baseline result dir name (under `./ahclib_results/`) used for relative scores |
 | `study_name`, `n_trials`, `optuna_timeout`, `njobs_optuna` | Optuna knobs (`optuna_timeout` is in **minutes**, `None` = no limit) |
-| `optuna_seed` | Seed for the sampler and for the WilcoxonPruner input-order shuffle |
+| `optuna_seed` | Seed for the sampler and the per-trial WilcoxonPruner input-order shuffle |
 | `objective(trial)` | Returns a tuple of CLI args passed to the solver as `argv[1], argv[2], …` |
 | `optuna_init_trials` | List of param dicts evaluated first (via `study.enqueue_trial`) |
 | `optuna_n_startup_trials` | Random-search trial count for `TPESampler` |
