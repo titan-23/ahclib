@@ -86,6 +86,11 @@ def get_args(argv=None) -> argparse.Namespace:
         help="最適化を行わず、保存済み study の Optuna Dashboard だけを起動する",
     )
     opt_parser.add_argument(
+        "--tailscale",
+        action="store_true",
+        help="Optuna Dashboard を Tailscale の tailnet 内だけに共有する",
+    )
+    opt_parser.add_argument(
         "--wilcoxon",
         default=True,
         action=argparse.BooleanOptionalAction,
@@ -128,7 +133,7 @@ def main():
         sys.exit(0)
 
     if args.command == "opt" and args.vis:
-        run_optimizer_dashboard()
+        run_optimizer_dashboard(tailscale=args.tailscale)
         sys.exit(0)
 
     if args.command == "setup":
@@ -185,6 +190,6 @@ def main():
                 to_bold(to_blue("auto_sampler option has been set.")), file=sys.stderr
             )
             sampler = "auto_sampler"
-        run_optimizer(settings, sampler, pruner)
+        run_optimizer(settings, sampler, pruner, tailscale=args.tailscale)
     else:
         raise ValueError

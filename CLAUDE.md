@@ -36,9 +36,12 @@ python3 -m ahclib opt              # default (WilcoxonPruner enabled)
 python3 -m ahclib opt --no-wilcoxon  # disable pruner
 python3 -m ahclib opt -a           # enable auto_sampler
 python3 -m ahclib opt --vis        # launch only the Optuna dashboard
+python3 -m ahclib opt --tailscale  # privately share dashboard within the tailnet
 ```
 
 All Optuna studies share the local JournalStorage file `./ahclib_results/optimizer_results/optuna-journal.log`, so the dashboard lists every study. `njobs_optuna` controls independent optimizer processes; each process opens its own study/storage session and calls `study.optimize(..., n_jobs=1)`, while the configured total `n_trials` is split across them. Journal writes use `JournalFileOpenLock` for `/mnt/c` compatibility. `Ctrl-C` cooperatively stops solver/session processes and records active trials as `FAIL`; worker-tagged orphan `RUNNING` trials are recovered on the next run. Legacy studies in local `ahclib_optuna_*` PostgreSQL databases are copied into the journal non-destructively when found. The `./ahclib_results/optimizer_results/<study_name>/` directory holds the latest `result.txt`, `trials.csv`, `study.json`, plots, and source/settings snapshots; `runs/<timestamp>/` archives each optimizer run. An `optuna-dashboard` process is launched automatically and its URL is logged.
+
+`--tailscale` starts a foreground `tailscale serve` proxy to the Dashboard's explicit `127.0.0.1:8080` binding. It is private to the tailnet and is stopped with the Dashboard. Do not replace it with public `tailscale funnel` for contest use.
 
 For `WilcoxonPruner`, each case score is reported with its stable case ID as the step, while case order is shuffled per trial. When pruning is requested, running solver subprocesses are terminated cooperatively and the objective normally returns the aggregate of completed cases, as recommended for this pruner. If that partial estimate would update the study best, the trial raises `TrialPruned` instead so an incompletely evaluated trial cannot become best. The early-stop flag and evaluated case count are stored in trial user attributes.
 

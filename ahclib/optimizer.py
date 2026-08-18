@@ -23,13 +23,17 @@ from .ahc_settings import AHCSettings
 from .ahc_util import to_blue, to_bold, to_green
 from .logging_util import configure_elapsed_logging
 from .parallel_tester import RESULTS_DIR, ParallelTester, build_tester
+from .tailscale_serve import TailscaleServe
 
 logger = getLogger(__name__)
 
 OPTIMIZER_RESULTS_SUBDIR = "optimizer_results"
 OPTUNA_JOURNAL_FILE = "optuna-journal.log"
-DEFAULT_DASHBOARD_URL = "http://localhost:8080/"
 LEGACY_POSTGRES_DB_PREFIX = "ahclib_optuna_"
+DASHBOARD_HOST = "127.0.0.1"
+DASHBOARD_PORT = 8080
+DEFAULT_DASHBOARD_URL = f"http://{DASHBOARD_HOST}:{DASHBOARD_PORT}/"
+TAILSCALE_DASHBOARD_TARGET = f"http://{DASHBOARD_HOST}:{DASHBOARD_PORT}"
 DASHBOARD_STARTUP_TIMEOUT_SEC = 30
 OPTIMIZER_SHUTDOWN_TIMEOUT_SEC = 10
 
@@ -253,7 +257,16 @@ def _start_dashboard() -> subprocess.Popen:
     process = subprocess.Popen(
         # gunicorn backendは"Listening on"を出力しないため、WSL/Ubuntuで
         # gunicornの有無に左右されないwsgirefへ固定する。
-        [executable, journal_path, "--server", "wsgiref"],
+        [
+            executable,
+            journal_path,
+            "--server",
+            "wsgiref",
+            "--host",
+            DASHBOARD_HOST,
+            "--port",
+            str(DASHBOARD_PORT),
+        ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
@@ -366,7 +379,17 @@ def _log_studies(storage: optuna.storages.BaseStorage) -> None:
         logger.info("- studies       : (none)")
 
 
-def run_optimizer_dashboard() -> None:
+def _start_private_dashboard() -> TailscaleServe:
+    logger.info("- remote access : starting Tailscale Serve ...")
+    tailscale_serve = TailscaleServe.start(TAILSCALE_DASHBOARD_TARGET)
+    logger.info(
+        f"- private URL   : {to_bold(to_blue(tailscale_serve.private_url))}"
+    )
+    logger.info("- access scope  : Tailscale tailnet only (not public)")
+    return tailscale_serve
+
+
+def run_optimizer_dashboard(tailscale: bool = False) -> None:
     """最適化は行わず、保存済みの全 study を Dashboard で表示する"""
     _configure_logging()
     storage = _build_storage()
@@ -376,11 +399,18 @@ def run_optimizer_dashboard() -> None:
     logger.info(f"- storage       : {to_bold(_journal_path())}")
     _log_studies(storage)
     process = _start_dashboard()
-    logger.info("==============================================")
+    tailscale_serve: Optional[TailscaleServe] = None
     try:
+        if tailscale:
+            tailscale_serve = _start_private_dashboard()
+        logger.info("==============================================")
         _wait_for_dashboard_close()
     finally:
-        _stop_dashboard(process)
+        try:
+            if tailscale_serve is not None:
+                tailscale_serve.stop()
+        finally:
+            _stop_dashboard(process)
 
 
 class Optimizer:
@@ -409,7 +439,10 @@ class Optimizer:
         return tuple(args)
 
     def optimize(
-        self, sampler: Optional[str] = None, pruner: Optional[str] = None
+        self,
+        sampler: Optional[str] = None,
+        pruner: Optional[str] = None,
+        tailscale: bool = False,
     ) -> None:
         logger.info("==============================================")
         logger.info(to_bold(to_blue("Optimizer settings:")))
@@ -587,6 +620,7 @@ class Optimizer:
                     raise
 
         dashboard_process: Optional[subprocess.Popen] = None
+        tailscale_serve: Optional[TailscaleServe] = None
         optimizer_processes: list[multiprocessing.Process] = []
         try:
             logger.info("------------------------------------------")
@@ -619,6 +653,8 @@ class Optimizer:
                     optimizer_process.start()
 
             dashboard_process = _start_dashboard()
+            if tailscale:
+                tailscale_serve = _start_private_dashboard()
             logger.info("==============================================")
 
             if len(trials_per_worker) == 1:
@@ -677,9 +713,15 @@ class Optimizer:
             logger.exception("Optimizer failed.")
             raise
         finally:
-            _stop_optimizer_processes(optimizer_processes)
-            if dashboard_process is not None:
-                _stop_dashboard(dashboard_process)
+            try:
+                _stop_optimizer_processes(optimizer_processes)
+            finally:
+                try:
+                    if tailscale_serve is not None:
+                        tailscale_serve.stop()
+                finally:
+                    if dashboard_process is not None:
+                        _stop_dashboard(dashboard_process)
 
     def _copy_snapshot(self, source: Optional[str], output_dir: str) -> None:
         if not source or not os.path.isfile(source):
@@ -782,11 +824,16 @@ class Optimizer:
         self._output_plots(study, img_path)
 
 
-def run_optimizer(settings: AHCSettings, sampler=None, pruner=None) -> None:
+def run_optimizer(
+    settings: AHCSettings,
+    sampler=None,
+    pruner=None,
+    tailscale: bool = False,
+) -> None:
     _configure_logging()
     optimizer = Optimizer(settings)
     try:
-        optimizer.optimize(sampler, pruner)
+        optimizer.optimize(sampler, pruner, tailscale=tailscale)
     except KeyboardInterrupt:
         # storage初期化中など、Optimizer内部のmain tryより前の割り込みも
         # tracebackなしで終了させる。

@@ -50,14 +50,15 @@ Optuna を用いたパラメータ探索
 
 .. code-block:: shell
 
-    python3 -m ahclib opt [--no-wilcoxon] [-a]
-    python3 -m ahclib opt --vis
+    python3 -m ahclib opt [--no-wilcoxon] [-a] [--tailscale]
+    python3 -m ahclib opt --vis [--tailscale]
 
 **オプション**
 
 - ``--no-wilcoxon`` : ``WilcoxonPruner`` を無効にする。既定では有効
 - ``-a``, ``--auto_sampler`` : ``auto_sampler`` を使う。指定しないときは ``TPESampler`` を使う
 - ``--vis`` : 最適化やコンパイルを行わず、保存済み study の Optuna Dashboard だけを起動する
+- ``--tailscale`` : Optuna Dashboard を Tailscale の tailnet 内だけに共有する
 
 全 study は ``./ahclib_results/optimizer_results/optuna-journal.log`` に保存される。
 同じ storage を共有するため、Dashboard の study 一覧から別の ``study_name`` も表示できる。
@@ -80,6 +81,81 @@ Optuna を用いたパラメータ探索
 ただし推定値が現在の best を更新する場合は、未評価ケースを含む trial が best になることを防ぐため
 ``TrialPruned`` とする。途中停止の有無と評価ケース数は ``ahclib_wilcoxon_stopped`` /
 ``ahclib_evaluated_cases`` user attribute に記録される。
+
+
+スマホからOptuna結果を非公開で見る
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``--tailscale`` を指定すると、Optuna Dashboard はローカルの
+``127.0.0.1:8080`` で動かしたまま、`Tailscale Serve
+<https://tailscale.com/docs/features/tailscale-serve>`_ 経由で自分の
+tailnet 内だけに共有される。インターネット一般には公開されない。
+
+個人・非商用で使う場合、Tailscale の `Personal plan
+<https://tailscale.com/pricing>`_ を無料で利用できる。
+
+初回導入
+""""""""
+
+1. ahclibを実行するPCへTailscaleをインストールする。
+
+   - Windows: `Windowsインストール手順 <https://tailscale.com/docs/install/windows>`_
+   - Linux/WSL: `Linuxインストール手順 <https://tailscale.com/docs/install/linux>`_
+
+   Linux/WSLでは、公式のインストールscriptを使う場合は以下になる。
+
+   .. code-block:: shell
+
+       curl -fsSL https://tailscale.com/install.sh | sh
+       sudo tailscale up
+
+   ahclibをWindows Pythonで動かすならWindows側、WSL内で動かすならWSL側へ
+   インストールする。DashboardとTailscale CLIが同じ実行環境にある必要がある。
+
+2. 表示に使うスマホへTailscaleをインストールする。
+
+   - `iPhone / iPad <https://tailscale.com/download/ios>`_
+   - `Android <https://tailscale.com/download/android>`_
+
+3. PCとスマホを同じTailscale accountでログインし、両方が同じtailnetに
+   表示されることを確認する。
+
+使い方
+""""""
+
+最適化しながら表示する場合:
+
+.. code-block:: shell
+
+    python3 -m ahclib opt --tailscale
+
+保存済みの結果だけを表示する場合:
+
+.. code-block:: shell
+
+    python3 -m ahclib opt --vis --tailscale
+
+初回はTailscale ServeのHTTPSを有効にするための同意URLがログに表示される。
+そのURLをPCで開いて許可すると、次のようなスマホ用URLが表示される。
+
+.. code-block:: text
+
+    - private URL   : https://<PC名>.<tailnet名>.ts.net
+    - access scope  : Tailscale tailnet only (not public)
+
+スマホのTailscaleを接続状態にして、この ``private URL`` をbrowserで開く。
+終了時は従来どおりEnterまたは ``Ctrl-C`` を使う。ahclibはforegroundの
+Tailscale Serveも同時に停止するため、共有設定は常駐しない。
+
+セキュリティ上の注意
+""""""""""""""""""""""
+
+- 公開機能である ``tailscale funnel`` は使用しない。ahclibが起動するのは
+  tailnet限定の ``tailscale serve`` だけである
+- ``--tailscale`` を付けない通常実行では、外部共有は一切起動しない
+- コンテスト中はtailnetへ他人を招待せず、自分の端末だけを登録する
+- スマホ紛失時はTailscale管理画面からその端末を削除する
+- 大会ごとの外部サービス利用規約も確認する
 
 
 設定ファイル
