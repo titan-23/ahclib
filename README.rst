@@ -7,6 +7,28 @@ AHC Lib
 `View on GitHub <https://github.com/titan-23/ahclib/tree/main>`_
 
 
+インストール
+-------------
+
+repository を clone したディレクトリで、使う機能に合わせてインストールします
+
+.. code-block:: shell
+
+    # setup と clear のみ
+    python3 -m pip install .
+
+    # 並列実行と通常の結果表示
+    python3 -m pip install ".[test,vis]"
+
+    # Optuna と AutoSampler
+    python3 -m pip install ".[opt,auto-sampler]"
+
+    # 全機能を開発用にインストール
+    python3 -m pip install -r requirements.txt
+
+``opt`` の旧 PostgreSQL storage を自動移行する場合だけ ``postgres`` も追加します
+
+
 使い方
 -------
 
@@ -41,6 +63,82 @@ AHC Lib
 - ``--no-record`` : 標準出力と標準エラー出力を保存しない
 - ``-m``, ``--memo`` : 実行結果に添えるメモを指定する。結果ディレクトリの ``memo.txt`` に保存され ``vis`` で表示される
 - ``-s``, ``--settings`` : 設定ファイルのパスを指定する (既定は ``ahc_settings.py``)
+
+
+実行結果の可視化
+~~~~~~~~~~~~~~~~~~
+
+保存済みのテスト結果を表示する場合は、テストを実行したディレクトリで次を実行します
+
+.. code-block:: shell
+
+    python3 -m ahclib vis
+
+実行一覧と詳細結果には Dash AG Grid を使用しています
+
+- 列名をクリックすると並べ替えられる
+- ``Ctrl`` を押しながら列名をクリックすると複数列で並べ替えられる
+- 詳細結果の列名直下にある入力欄でケースを絞り込める
+- ``フィルター解除`` ですべての列フィルターを解除できる
+- 並べ替えや絞り込みの後もケース ID を使って選択中の行を識別する
+- ``前へ`` と ``次へ``、または ``k`` と ``j`` で現在の表示順に沿ってケースを移動できる
+- 改善、悪化、同点、比較不能、失敗、Bookmark でケースを絞り込める
+- Target と Base の State、score、rank、time とそれぞれの差分を表示する
+- Score、Rank、Time、Best、入力パラメータの列グループを表示切り替えできる
+- ``Zoom reset`` でグラフの表示範囲を戻せる
+- グラフ種別、列表示、列 filter と並べ替えは browser session に保存される
+- Base は手動選択、``直前を Base``、Target の直前へ自動追従から選べる
+
+実行一覧には次の集計値を表示します
+
+- ``Total`` は現在の ``AHCSettings.get_score`` で計算した総合値
+- ``Ave`` は算術平均
+- ``Median`` は中央値
+- ``IQR`` は四分位範囲
+- ``CI95 ±`` は算術平均の 95% 信頼区間の半幅 (正規近似)
+- ``RelGeo`` は Base に対する正の相対値の幾何平均
+- ``Rel N/A`` は Base が 0、欠損などで相対値を計算できないケース数
+
+過去 run の ``Total`` も現在の ``ahc_settings.py`` で計算します
+当時の集計方法を保存する機能は今後の manifest 対応で追加する予定です
+
+``AHCSettings.parse_input_params`` が辞書を返す場合は、そのキーを詳細結果の列として追加します
+数値は数値フィルター、文字列は文字列フィルターとして扱います
+
+.. code-block:: python
+
+    @staticmethod
+    def parse_input_params(file_path: str) -> dict[str, int]:
+        with open(file_path, encoding="utf-8") as input_file:
+            n, m = map(int, input_file.readline().split())
+        return {"N": n, "M": m}
+
+この例では詳細結果へ ``N`` と ``M`` の列が追加されます
+
+実行一覧の Tag と Favorite、ケースごとの Memo と Bookmark は結果 run 内の
+``.ahclib_vis.json`` へ保存します
+既存の ``result.csv``、入力、出力は変更しません
+
+詳細タブでは Target と Base の err / out を横並びで比較できます
+入力、出力、source、diff が大きい場合は先頭と末尾だけを表示し、必要な場合だけ
+``全文表示`` を選びます
+表示内容の検索と行折り返しも利用できます
+
+``visualizer.html`` はビジュアライザタブを開いた時だけ読み込みます
+iframe には ``sandbox`` と Content Security Policy を設定しており、外部通信は許可しません
+``visualizer.html`` 自体は信頼できるローカルファイルだけを使用してください
+
+通常の ``vis`` をスマホなどへ共有する場合は次を実行します
+
+.. code-block:: shell
+
+    python3 -m ahclib vis --tailscale
+
+``--tailscale`` では ``127.0.0.1:8050`` を Tailscale Serve へ接続し、tailnet 内だけに共有します
+Funnel と ``0.0.0.0`` は使用しません
+共有中の画面は読み取り専用になり、削除、Memo、Tag、Favorite、Bookmark の変更は
+画面とサーバーの両方で無効になります
+port を変える場合は ``--port 8051`` のように指定します
 
 
 Optuna を用いたパラメータ探索
@@ -83,11 +181,11 @@ Optuna を用いたパラメータ探索
 ``ahclib_evaluated_cases`` user attribute に記録される。
 
 
-スマホからOptuna結果を非公開で見る
+スマホから vis と Optuna 結果を非公開で見る
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-``--tailscale`` を指定すると、Optuna Dashboard はローカルの
-``127.0.0.1:8080`` で動かしたまま、`Tailscale Serve
+``--tailscale`` を指定すると、通常の vis または Optuna Dashboard をローカルで
+動かしたまま、`Tailscale Serve
 <https://tailscale.com/docs/features/tailscale-serve>`_ 経由で自分の
 tailnet 内だけに共有される。インターネット一般には公開されない。
 
@@ -145,6 +243,14 @@ tailnet 内だけに共有される。インターネット一般には公開さ
 
     python3 -m ahclib opt --vis --tailscale
 
+保存済みのテスト結果を通常の vis で表示する場合:
+
+.. code-block:: shell
+
+    python3 -m ahclib vis --tailscale
+
+通常の vis は共有時だけ読み取り専用になります
+
 初回はTailscale ServeのHTTPSを有効にするための同意URLがログに表示される。
 そのURLをPCで開いて許可すると、次のようなスマホ用URLが表示される。
 
@@ -163,6 +269,7 @@ Tailscale Serveも同時に停止するため、共有設定は常駐しない�
 - 公開機能である ``tailscale funnel`` は使用しない。ahclibが起動するのは
   tailnet限定の ``tailscale serve`` だけである
 - ``--tailscale`` を付けない通常実行では、外部共有は一切起動しない
+- HTTPS 証明書の発行に使う Tailscale の端末名は公開 ledger に記録されるため、端末名へ機密情報を含めない
 - コンテスト中はtailnetへ他人を招待せず、自分の端末だけを登録する
 - スマホ紛失時はTailscale管理画面からその端末を削除する
 - 大会ごとの外部サービス利用規約も確認する

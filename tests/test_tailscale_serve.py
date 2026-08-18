@@ -60,13 +60,16 @@ class TailscaleServeTest(unittest.TestCase):
         )
         target = "http://127.0.0.1:8080"
 
-        with patch(
-            "ahclib.tailscale_serve._find_tailscale_executable",
-            return_value="tailscale",
-        ), patch(
-            "ahclib.tailscale_serve.subprocess.Popen",
-            return_value=process,
-        ) as popen:
+        with (
+            patch(
+                "ahclib.tailscale_serve._find_tailscale_executable",
+                return_value="tailscale",
+            ),
+            patch(
+                "ahclib.tailscale_serve.subprocess.Popen",
+                return_value=process,
+            ) as popen,
+        ):
             serve = TailscaleServe.start(target, startup_timeout=1)
 
         self.assertEqual(
@@ -85,12 +88,15 @@ class TailscaleServeTest(unittest.TestCase):
         process = _FakeProcess(["Serve is not enabled\n"], return_code=1)
 
         with self.assertLogs("ahclib.tailscale_serve", level="INFO") as logs:
-            with patch(
-                "ahclib.tailscale_serve._find_tailscale_executable",
-                return_value="tailscale",
-            ), patch(
-                "ahclib.tailscale_serve.subprocess.Popen",
-                return_value=process,
+            with (
+                patch(
+                    "ahclib.tailscale_serve._find_tailscale_executable",
+                    return_value="tailscale",
+                ),
+                patch(
+                    "ahclib.tailscale_serve.subprocess.Popen",
+                    return_value=process,
+                ),
             ):
                 with self.assertRaisesRegex(RuntimeError, "failed to start"):
                     TailscaleServe.start("http://127.0.0.1:8080", startup_timeout=1)
@@ -103,12 +109,15 @@ class TailscaleServeTest(unittest.TestCase):
     def test_start_terminates_unconfirmed_foreground_process(self) -> None:
         process = _FakeProcess([])
 
-        with patch(
-            "ahclib.tailscale_serve._find_tailscale_executable",
-            return_value="tailscale",
-        ), patch(
-            "ahclib.tailscale_serve.subprocess.Popen",
-            return_value=process,
+        with (
+            patch(
+                "ahclib.tailscale_serve._find_tailscale_executable",
+                return_value="tailscale",
+            ),
+            patch(
+                "ahclib.tailscale_serve.subprocess.Popen",
+                return_value=process,
+            ),
         ):
             with self.assertRaisesRegex(RuntimeError, "not confirmed"):
                 TailscaleServe.start("http://127.0.0.1:8080", startup_timeout=1)
@@ -116,8 +125,9 @@ class TailscaleServeTest(unittest.TestCase):
         self.assertTrue(process.terminated)
 
     def test_find_executable_reports_missing_installation(self) -> None:
-        with patch("ahclib.tailscale_serve.shutil.which", return_value=None), patch(
-            "ahclib.tailscale_serve.os.name", "posix"
+        with (
+            patch("ahclib.tailscale_serve.shutil.which", return_value=None),
+            patch("ahclib.tailscale_serve.os.name", "posix"),
         ):
             with self.assertRaisesRegex(RuntimeError, "CLI was not found"):
                 _find_tailscale_executable()

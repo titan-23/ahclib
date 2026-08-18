@@ -1,10 +1,10 @@
-from typing import Any, Optional
+from typing import Optional
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-from .data import ResultStore
+from .data import ResultSnapshot, ResultStore, calculate_relative_scores
 
 
 def add_ts_count_label(
@@ -23,20 +23,20 @@ def add_ts_count_label(
 
 def build_graph(
     store: ResultStore,
-    rows: Optional[list[int]],
+    snapshot: ResultSnapshot,
+    selected_timestamps: Optional[list[str]],
     graph_type: str,
     param_x: Optional[str],
     param_y: Optional[str],
     log_scale: Optional[list[str]],
     target_ts: Optional[str],
-    table_data: list[dict[str, Any]],
     base_ts: Optional[str],
+    reset_count: int = 0,
 ) -> tuple[go.Figure, str]:
     """グラフ種別に応じた Figure と要約文を返す"""
     direction = store.direction
 
-    valid_rows = [row for row in rows if row < len(table_data)] if rows else []
-    if not valid_rows or not target_ts:
+    if not selected_timestamps or not target_ts:
         figure = px.line(title="（実行結果が選択されていません）")
         figure.update_layout(
             template="plotly_dark",
@@ -46,15 +46,15 @@ def build_graph(
         )
         return figure, ""
 
-    selected_timestamps = [table_data[i]["timestamp"] for i in valid_rows]
-
-    all_results = store.long_frame()
+    all_results = snapshot.results
 
     all_timestamps = sorted(all_results["timestamp"].unique())
     if base_ts not in all_timestamps:
         base_ts = all_timestamps[0] if all_timestamps else None
 
-    selected_results = all_results[all_results["timestamp"].isin(selected_timestamps)]
+    selected_timestamps = list(dict.fromkeys(selected_timestamps))
+    selected_frames = [snapshot.run(timestamp) for timestamp in selected_timestamps]
+    selected_results = pd.concat(selected_frames, ignore_index=True)
     selected_results = selected_results[
         pd.to_numeric(selected_results["score"], errors="coerce").notna()
     ]
@@ -82,19 +82,14 @@ def build_graph(
         figure.update_layout(yaxis_title="Score")
 
     elif graph_type == "rel":
-        baseline_results = all_results[all_results["timestamp"] == base_ts][
-            ["test_id", "score"]
-        ].rename(columns={"score": "base_score"})
+        baseline_results = snapshot.run(base_ts)[["test_id", "score"]].rename(
+            columns={"score": "base_score"}
+        )
         merged_results = pd.merge(
             selected_results, baseline_results, on="test_id", how="left"
         )
-        merged_results["relative_score"] = merged_results.apply(
-            lambda row: (
-                row["score"] / row["base_score"]
-                if pd.notna(row["base_score"]) and row["base_score"] != 0
-                else 1.0
-            ),
-            axis=1,
+        merged_results["relative_score"] = calculate_relative_scores(
+            merged_results["score"], merged_results["base_score"]
         )
         label_order = add_ts_count_label(merged_results, sorted_timestamps)
         figure = px.line(
@@ -137,7 +132,7 @@ def build_graph(
 
     elif graph_type.startswith("param_"):
         parameter_column = param_x
-        metadata = store.meta()
+        metadata = snapshot.metadata
         if not metadata.empty and parameter_column in metadata.columns:
             merged_results = pd.merge(
                 selected_results, metadata, on="test_id", how="left"
@@ -206,15 +201,19 @@ def build_graph(
                 xaxis_title=f"Parameter: {parameter_column}",
                 yaxis_title="Score",
             )
+        else:
+            figure = px.scatter(title="（パラメータ情報を取得できませんでした）")
+            figure.update_layout(
+                paper_bgcolor="#1e1e1e",
+                plot_bgcolor="#1e1e1e",
+            )
 
     elif graph_type in ["difficulty_box", "difficulty_heatmap"]:
         selection_count = len(selected_timestamps)
-        summary_text = f"CV分析: {selection_count}件の実行結果"
+        summary_text = f"CV 分析: {selection_count} 件の実行結果"
         if selection_count < 2:
             summary_text += " ⚠️ 2件以上選択してください"
-        variation_results = all_results[
-            all_results["timestamp"].isin(selected_timestamps)
-        ].copy()
+        variation_results = selected_results.copy()
         variation_results["score"] = pd.to_numeric(
             variation_results["score"], errors="coerce"
         )
@@ -224,15 +223,18 @@ def build_graph(
             variation_results.groupby("test_id")["score"]
             .agg(
                 cv=lambda scores: (
-                    scores.std() / scores.mean()
-                    if scores.mean() != 0 and len(scores) > 1
-                    else 0.0
+                    scores.std() / abs(scores.mean())
+                    if abs(scores.mean()) > 1e-12 and len(scores) > 1
+                    else float("nan")
                 )
             )
             .reset_index()
         )
+        unavailable_count = int(coefficient_variation["cv"].isna().sum())
+        if unavailable_count:
+            summary_text += f" | CV 算出不能 {unavailable_count} 件"
 
-        metadata = store.meta()
+        metadata = snapshot.metadata
         parameter_column = param_x
 
         if metadata.empty or parameter_column not in metadata.columns:
@@ -264,7 +266,7 @@ def build_graph(
                     y="cv",
                     labels={
                         "param_label": f"Parameter: {parameter_column}",
-                        "cv": "CV (std/mean)",
+                        "cv": "CV (std/abs(mean))",
                     },
                     category_orders={"param_label": label_order},
                 )
@@ -274,7 +276,7 @@ def build_graph(
                 y_parameter_column = param_y
                 if y_parameter_column not in metadata.columns:
                     figure = px.scatter(
-                        title="（Y軸パラメータ情報を取得できませんでした）"
+                        title="（Y 軸パラメータ情報を取得できませんでした）"
                     )
                     figure.update_layout(
                         paper_bgcolor="#1e1e1e",
@@ -333,13 +335,13 @@ def build_graph(
                     )
 
     elif graph_type in ["heatmap_abs", "heatmap_rel"]:
-        metadata = store.meta()
+        metadata = snapshot.metadata
         if (
             not metadata.empty
             and param_x in metadata.columns
             and param_y in metadata.columns
         ):
-            heatmap_results = all_results[all_results["timestamp"] == target_ts]
+            heatmap_results = snapshot.run(target_ts)
             heatmap_results = heatmap_results[
                 pd.to_numeric(heatmap_results["score"], errors="coerce").notna()
             ]
@@ -350,22 +352,17 @@ def build_graph(
             )
 
             if graph_type == "heatmap_rel":
-                baseline_results = all_results[all_results["timestamp"] == base_ts][
-                    ["test_id", "score"]
-                ].rename(columns={"score": "base_score"})
+                baseline_results = snapshot.run(base_ts)[["test_id", "score"]].rename(
+                    columns={"score": "base_score"}
+                )
                 merged_results = pd.merge(
                     merged_results,
                     baseline_results,
                     on="test_id",
                     how="left",
                 )
-                merged_results["val"] = merged_results.apply(
-                    lambda row: (
-                        row["score"] / row["base_score"]
-                        if pd.notna(row["base_score"]) and row["base_score"] != 0
-                        else 1.0
-                    ),
-                    axis=1,
+                merged_results["val"] = calculate_relative_scores(
+                    merged_results["score"], merged_results["base_score"]
                 )
             else:
                 merged_results["val"] = merged_results["score"]
@@ -454,7 +451,7 @@ def build_graph(
         figure.update_layout(xaxis_title="Time (s)", yaxis_title="Score")
 
     elif graph_type == "regression":
-        comparison = store.compare(base_ts, target_ts)
+        comparison = store.compare(base_ts, target_ts, snapshot=snapshot)
         comparison = comparison.dropna(subset=["base", "target"])
         if comparison.empty:
             figure = px.scatter(title="（比較できるデータがありません）")
@@ -497,7 +494,7 @@ def build_graph(
 
     is_log = bool(log_scale and "log" in log_scale)
 
-    if graph_type in ["heatmap_abs", "heatmap_rel"]:
+    if graph_type in ["heatmap_abs", "heatmap_rel", "difficulty_heatmap"]:
         yaxis_type = "category"
         xaxis_type = "category"
     else:
@@ -511,7 +508,7 @@ def build_graph(
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         paper_bgcolor="#1e1e1e",
         plot_bgcolor="#1e1e1e",
-        uirevision=True,
+        uirevision=f"reset-{reset_count}",
         yaxis_type=yaxis_type,
     )
 
@@ -522,8 +519,15 @@ def build_graph(
         summary_text = f"ヒートマップ対象: {target_ts}"
     elif graph_type == "heatmap_rel":
         summary_text = f"ヒートマップ対象: {target_ts} (Base: {base_ts})"
+    elif graph_type in ["difficulty_box", "difficulty_heatmap"]:
+        pass
     elif graph_type == "regression":
-        statistics = store.paired_stats(base_ts, target_ts)
+        statistics = store.paired_stats(
+            base_ts,
+            target_ts,
+            comparison=comparison,
+            snapshot=snapshot,
+        )
         p_value_text = f"{statistics['p']:.3g}" if statistics["p"] is not None else "-"
         summary_text = (
             f"回帰: Target {target_ts} vs Base {base_ts} | "

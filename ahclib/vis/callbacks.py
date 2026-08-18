@@ -1,56 +1,76 @@
-import pandas as pd
+from typing import Any, Optional
+
 import dash
-from dash import Dash, ctx
+from dash import Dash, ctx, html
 from dash.dependencies import Input, Output, State
 
-from . import figures
-from . import tabs
-from .data import ResultStore, format_timestamp
+from . import config, figures, tabs
+from .data import ResultStore
+from .table_data import (
+    build_case_rows,
+    build_run_rows,
+    parameter_column_specs,
+    selected_row_ids,
+)
+
+
+def _changed_cells(change: Any) -> list[dict[str, Any]]:
+    if isinstance(change, dict):
+        return [change]
+    if isinstance(change, list):
+        return [item for item in change if isinstance(item, dict)]
+    return []
+
+
+def _selected_case(selected_rows: Any) -> Optional[dict[str, Any]]:
+    if isinstance(selected_rows, list):
+        return next((row for row in selected_rows if isinstance(row, dict)), None)
+    row_ids = selected_row_ids(selected_rows)
+    return {"id": row_ids[0]} if row_ids else None
+
+
+def adjacent_case_id(
+    rows: Optional[list[dict[str, Any]]],
+    selected_rows: Any,
+    offset: int,
+) -> Optional[str]:
+    """現在の表示順で隣接するケース ID を返す"""
+    row_ids = [str(row["id"]) for row in rows or [] if row.get("id") is not None]
+    if not row_ids:
+        return None
+
+    selected_ids = selected_row_ids(selected_rows)
+    current_id = selected_ids[0] if selected_ids else None
+    try:
+        current_index = row_ids.index(current_id) if current_id else -1
+    except ValueError:
+        current_index = -1
+
+    if current_index < 0:
+        next_index = 0 if offset > 0 else len(row_ids) - 1
+    else:
+        next_index = current_index + offset
+    return row_ids[min(max(next_index, 0), len(row_ids) - 1)]
 
 
 def register_callbacks(app: Dash, store: ResultStore) -> None:
     @app.callback(
         Output("target-ts-store", "data"),
-        Output("prev-selected-rows", "data"),
-        Input("timestamp-table", "selected_rows"),
-        State("prev-selected-rows", "data"),
+        Input("timestamp-table", "selectedRows"),
+        Input("timestamp-table", "cellClicked"),
         State("target-ts-store", "data"),
-        State("table-data", "data"),
     )
-    def update_target_store(
-        selected_rows, previous_selected, current_target, table_data
-    ):
-        if selected_rows is None:
-            selected_rows = []
-        if previous_selected is None:
-            previous_selected = []
-        if not table_data:
-            return None, selected_rows
+    def update_target_store(selected_rows, clicked_cell, current_target):
+        selected_ids = selected_row_ids(selected_rows)
+        if ctx.triggered_prop_id == "timestamp-table.cellClicked" and clicked_cell:
+            column_id = clicked_cell.get("colId")
+            row_id = clicked_cell.get("rowId")
+            if row_id is not None and column_id not in ("is_base_str", "delete_btn"):
+                return str(row_id)
 
-        added_rows = [
-            row_index
-            for row_index in selected_rows
-            if row_index not in previous_selected
-        ]
-        new_target = current_target
-
-        if added_rows:
-            last_added = added_rows[-1]
-            if last_added < len(table_data):
-                new_target = table_data[last_added]["timestamp"]
-        else:
-            selected_ts_list = [
-                table_data[row_index]["timestamp"]
-                for row_index in selected_rows
-                if row_index < len(table_data)
-            ]
-            if new_target not in selected_ts_list:
-                if selected_ts_list:
-                    new_target = sorted(selected_ts_list)[-1]
-                else:
-                    new_target = None
-
-        return new_target, selected_rows
+        if current_target in selected_ids:
+            return current_target
+        return max(selected_ids) if selected_ids else None
 
     @app.callback(
         Output("sidebar-container", "className"),
@@ -60,11 +80,10 @@ def register_callbacks(app: Dash, store: ResultStore) -> None:
         State("sidebar-container", "className"),
         prevent_initial_call=True,
     )
-    def toggle_sidebar_pin(n_clicks, current_class):
+    def toggle_sidebar_pin(_click_count, current_class):
         if "sidebar-unpinned" in current_class:
             return "sidebar-base sidebar-pinned", "◀", "サイドバーの固定を解除する"
-        else:
-            return "sidebar-base sidebar-unpinned", "📌", "サイドバーを固定する"
+        return "sidebar-base sidebar-unpinned", "📌", "サイドバーを固定する"
 
     @app.callback(
         Output("param-selector-container", "style"),
@@ -72,21 +91,16 @@ def register_callbacks(app: Dash, store: ResultStore) -> None:
         Input("graph-type", "value"),
     )
     def toggle_param_selector(graph_type):
+        visible = {"display": "flex", "alignItems": "center", "gap": "5px"}
         if graph_type in ["heatmap_abs", "heatmap_rel", "difficulty_heatmap"]:
-            return {"display": "flex", "alignItems": "center", "gap": "5px"}, {
-                "display": "flex",
-                "alignItems": "center",
-                "gap": "5px",
-            }
-        elif graph_type in [
+            return visible, visible
+        if graph_type in [
             "param_scatter",
             "param_box",
             "param_line",
             "difficulty_box",
         ]:
-            return {"display": "flex", "alignItems": "center", "gap": "5px"}, {
-                "display": "none"
-            }
+            return visible, {"display": "none"}
         return {"display": "none"}, {"display": "none"}
 
     @app.callback(
@@ -95,11 +109,17 @@ def register_callbacks(app: Dash, store: ResultStore) -> None:
         Output("param-selector-y", "options"),
         Output("param-selector-y", "value"),
         Input("reload-button", "n_clicks"),
+        Input("result-version-store", "data"),
         State("param-selector", "value"),
         State("param-selector-y", "value"),
     )
-    def update_param_options(_click_count, current_x, current_y):
-        metadata = store.meta()
+    def update_param_options(
+        _click_count,
+        _result_version,
+        current_x,
+        current_y,
+    ):
+        metadata = store.snapshot().metadata
         parameter_columns = [
             column for column in metadata.columns if column != "test_id"
         ]
@@ -107,7 +127,6 @@ def register_callbacks(app: Dash, store: ResultStore) -> None:
             return [], None, [], None
 
         options = [{"label": column, "value": column} for column in parameter_columns]
-
         selected_x = (
             current_x if current_x in parameter_columns else parameter_columns[0]
         )
@@ -120,351 +139,427 @@ def register_callbacks(app: Dash, store: ResultStore) -> None:
                 else parameter_columns[0]
             )
         )
-
         return options, selected_x, options, selected_y
 
     @app.callback(
-        Output("base-store", "data"),
-        Input("timestamp-table", "active_cell"),
-        State("table-data", "data"),
-        State("base-store", "data"),
-    )
-    def update_base_store(active_cell, table_data, current_base):
-        if not active_cell or not table_data:
-            return current_base
-        if active_cell["column_id"] == "is_base_str":
-            base_ts = active_cell.get("row_id")
-            if base_ts:
-                return base_ts
-            row_idx = active_cell["row"]
-            if row_idx < len(table_data):
-                return table_data[row_idx]["timestamp"]
-        return current_base
-
-    @app.callback(
-        Output("dummy-output", "children"),
-        Input("timestamp-table", "data"),
-        State("timestamp-table", "data_previous"),
+        Output("base-request-store", "data"),
+        Input("timestamp-table", "cellClicked"),
+        Input("previous-base", "n_clicks"),
+        Input("target-ts-store", "data"),
+        Input("base-mode-check", "value"),
         prevent_initial_call=True,
     )
-    def save_memo(current_data, previous_data):
-        if current_data and previous_data:
-            for current_row, previous_row in zip(current_data, previous_data):
-                current_memo = str(current_row.get("memo", "")).strip()
-                previous_memo = str(previous_row.get("memo", "")).strip()
-                if current_memo != previous_memo:
-                    store.save_memo(current_row["timestamp"], current_memo)
+    def request_base_change(
+        clicked_cell,
+        _previous_clicks,
+        target_timestamp,
+        base_mode,
+    ):
+        if (
+            ctx.triggered_prop_id == "timestamp-table.cellClicked"
+            and clicked_cell
+            and clicked_cell.get("colId") == "is_base_str"
+        ):
+            return {
+                "timestamp": clicked_cell.get("rowId"),
+                "clicked_at": clicked_cell.get("timestamp"),
+            }
+        use_previous = ctx.triggered_id == "previous-base" or (
+            ctx.triggered_id in ("target-ts-store", "base-mode-check")
+            and base_mode
+            and "previous" in base_mode
+        )
+        if use_previous and target_timestamp:
+            timestamps = sorted(
+                store.snapshot().results["timestamp"].dropna().astype(str).unique()
+            )
+            if target_timestamp in timestamps:
+                index = timestamps.index(target_timestamp)
+                return {"timestamp": timestamps[max(0, index - 1)]}
         return dash.no_update
 
     @app.callback(
-        Output("timestamp-table", "data"),
+        Output("pending-delete-store", "data"),
+        Output("delete-confirm", "displayed"),
+        Output("delete-confirm", "message"),
+        Input("timestamp-table", "cellClicked"),
+        prevent_initial_call=True,
+    )
+    def request_delete(clicked_cell):
+        if not clicked_cell or clicked_cell.get("colId") != "delete_btn":
+            return dash.no_update, dash.no_update, dash.no_update
+        timestamp = clicked_cell.get("rowId")
+        if not timestamp:
+            return dash.no_update, dash.no_update, dash.no_update
+        return str(timestamp), True, f"実行結果 {timestamp} を削除しますか"
+
+    @app.callback(
+        Output("delete-result-store", "data"),
+        Input("delete-confirm", "submit_n_clicks"),
+        State("pending-delete-store", "data"),
+        prevent_initial_call=True,
+    )
+    def delete_result(_submit_count, timestamp):
+        if not timestamp:
+            return dash.no_update
+        try:
+            store.delete(str(timestamp))
+            store.refresh()
+            return {"timestamp": str(timestamp), "error": None}
+        except (OSError, ValueError) as error:
+            return {"timestamp": str(timestamp), "error": str(error)}
+
+    @app.callback(
+        Output("run-edit-result-store", "data"),
+        Input("timestamp-table", "cellValueChanged"),
+        Input("timestamp-table", "cellClicked"),
+        prevent_initial_call=True,
+    )
+    def save_run_edit(change, clicked_cell):
+        try:
+            if (
+                ctx.triggered_prop_id == "timestamp-table.cellClicked"
+                and clicked_cell
+                and clicked_cell.get("colId") == "favorite_str"
+            ):
+                timestamp = str(clicked_cell.get("rowId") or "")
+                store.toggle_favorite(timestamp)
+                return {"timestamp": timestamp, "error": None}
+
+            saved_timestamps = []
+            for changed_cell in _changed_cells(change):
+                column_id = changed_cell.get("colId")
+                if column_id not in ("memo", "tag"):
+                    continue
+                row = changed_cell.get("data") or {}
+                timestamp = row.get("timestamp") or changed_cell.get("rowId")
+                if not timestamp:
+                    continue
+                new_value = changed_cell.get("newValue")
+                value = "" if new_value is None else str(new_value)
+                if column_id == "memo":
+                    store.save_memo(str(timestamp), value)
+                else:
+                    store.save_tag(str(timestamp), value)
+                saved_timestamps.append(str(timestamp))
+            if saved_timestamps:
+                return {"timestamp": saved_timestamps[-1], "error": None}
+        except (OSError, PermissionError, ValueError) as error:
+            return {"timestamp": None, "error": str(error)}
+        return dash.no_update
+
+    @app.callback(
+        Output("timestamp-table", "rowData"),
         Output("table-data", "data"),
-        Output("timestamp-table", "active_cell"),
+        Output("result-version-store", "data"),
+        Output("base-store", "data"),
         Input("reload-button", "n_clicks"),
-        Input("base-store", "data"),
-        Input("timestamp-table", "active_cell"),
+        Input("base-request-store", "data"),
         Input("auto-refresh-interval", "n_intervals"),
-        State("table-data", "data"),
+        Input("delete-result-store", "data"),
+        Input("run-edit-result-store", "data"),
+        State("result-version-store", "data"),
+        State("base-store", "data"),
     )
     def update_table(
         _reload_clicks,
-        base_ts,
-        active_cell,
+        base_request,
         _interval_count,
-        current_data,
+        _delete_result,
+        _run_edit_result,
+        previous_version,
+        current_base,
     ):
-        triggered = ctx.triggered_id
-
-        if triggered in ("reload-button", "auto-refresh-interval"):
+        triggered = ctx.triggered_prop_id
+        if triggered == "reload-button.n_clicks":
             store.refresh()
 
-        # 同じセルの連続クリックでも発火させるため active_cell をリセットする
-        reset_active = dash.no_update
+        snapshot = store.snapshot()
         if (
-            triggered == "timestamp-table"
-            and active_cell
-            and active_cell.get("column_id") in ("delete_btn", "is_base_str")
+            triggered == "auto-refresh-interval.n_intervals"
+            and snapshot.version == previous_version
         ):
-            reset_active = None
-
-        if (
-            triggered == "timestamp-table"
-            and active_cell
-            and active_cell.get("column_id") == "delete_btn"
-        ):
-            ts_to_delete = active_cell.get("row_id")
-            if not ts_to_delete:
-                row_idx = active_cell["row"]
-                if current_data and row_idx < len(current_data):
-                    ts_to_delete = current_data[row_idx]["timestamp"]
-
-            if ts_to_delete:
-                store.delete(ts_to_delete)
-                store.refresh()
-
-        all_results = store.long_frame()
-        if all_results.empty:
-            return [], [], reset_active
-
-        timestamps = sorted(all_results["timestamp"].unique())
-        if not timestamps:
-            return [], [], reset_active
-
-        if base_ts not in timestamps:
-            base_ts = timestamps[0]
-
-        baseline_results = all_results[all_results["timestamp"] == base_ts][
-            ["test_id", "score"]
-        ].rename(columns={"score": "base_score"})
-        merged_results = pd.merge(
-            all_results, baseline_results, on="test_id", how="left"
-        )
-
-        merged_results["rel_score"] = merged_results.apply(
-            lambda row: (
-                row["score"] / row["base_score"]
-                if pd.notna(row["base_score"]) and row["base_score"] != 0
-                else 1.0
-            ),
-            axis=1,
-        )
-
-        grouped = (
-            merged_results.groupby("timestamp")
-            .agg(
-                average_score=("score", "mean"),
-                rel_ave=("rel_score", "mean"),
-                std_score=("score", "std"),
+            return (
+                dash.no_update,
+                dash.no_update,
+                dash.no_update,
+                dash.no_update,
             )
-            .reset_index()
+
+        requested_base = (
+            base_request.get("timestamp")
+            if triggered == "base-request-store.data" and base_request
+            else current_base
         )
-
-        if "state" in all_results.columns:
-            failed_counts = (
-                all_results[all_results["state"] != "AC"].groupby("timestamp").size()
-            )
-            grouped["ng_cnt"] = (
-                grouped["timestamp"].map(failed_counts).fillna(0).astype(int)
-            )
-        else:
-            grouped["ng_cnt"] = 0
-
-        grouped["formatted"] = grouped["timestamp"].apply(format_timestamp)
-        grouped["is_base_str"] = grouped["timestamp"].apply(
-            lambda timestamp: "★" if timestamp == base_ts else "・"
+        rows, actual_base = build_run_rows(
+            snapshot.results,
+            requested_base,
+            store.get_memo,
+            run_summary=snapshot.run_summary,
+            run_annotations=store.run_annotations(snapshot.run_indices),
         )
-        grouped["delete_btn"] = "🗑️"
-        grouped["memo"] = grouped["timestamp"].apply(store.get_memo)
-        grouped = grouped.sort_values("timestamp")
-
-        records = grouped.to_dict("records")
-        for record in records:
-            record["id"] = record["timestamp"]
-
-        return records, records, reset_active
+        return rows, rows, snapshot.version, actual_base
 
     @app.callback(
-        Output("timestamp-table", "selected_rows"),
+        Output("status-banner", "children"),
+        Output("status-banner", "style"),
+        Input("result-version-store", "data"),
+        Input("delete-result-store", "data"),
+        Input("run-edit-result-store", "data"),
+        Input("case-edit-result-store", "data"),
+    )
+    def show_status(
+        _result_version,
+        delete_result,
+        run_edit_result,
+        case_edit_result,
+    ):
+        warnings = list(store.snapshot().warnings)
+        for label, result in [
+            ("削除", delete_result),
+            ("実行情報の保存", run_edit_result),
+            ("ケース情報の保存", case_edit_result),
+        ]:
+            if result and result.get("error"):
+                warnings.append(f"{label}失敗 ({result['error']})")
+        if not warnings:
+            return "", {"display": "none"}
+
+        shown = warnings[:6]
+        if len(warnings) > len(shown):
+            shown.append(f"ほか {len(warnings) - len(shown)} 件")
+        return (
+            html.Ul([html.Li(warning) for warning in shown]),
+            {
+                "display": "block",
+                "backgroundColor": "#4a3516",
+                "color": "#ffd180",
+                "padding": "6px 20px",
+                "margin": "0",
+                "fontSize": "12px",
+            },
+        )
+
+    @app.callback(
+        Output("timestamp-table", "selectedRows"),
         Input("add-latest", "n_clicks"),
         Input("select-all", "n_clicks"),
         Input("clear-selection", "n_clicks"),
-        Input("reload-button", "n_clicks"),
-        Input("timestamp-table", "selected_rows"),
+        State("timestamp-table", "selectedRows"),
         State("table-data", "data"),
+        prevent_initial_call=True,
     )
     def handle_selection(
         _latest_clicks,
         _select_all_clicks,
         _clear_clicks,
-        _reload_clicks,
-        native_selected,
+        current_selection,
         table_data,
     ):
-        triggered = ctx.triggered_id
-        if not table_data:
+        available_ids = [str(row["id"]) for row in table_data or []]
+        if not available_ids or ctx.triggered_id == "clear-selection":
             return []
+        if ctx.triggered_id == "select-all":
+            return {"ids": available_ids}
 
-        selected_rows = native_selected if native_selected else []
-        selected_rows = [
-            row_index for row_index in selected_rows if row_index < len(table_data)
+        selected_ids = [
+            row_id
+            for row_id in selected_row_ids(current_selection)
+            if row_id in available_ids
         ]
-
-        if triggered == "add-latest":
-            latest_index = len(table_data) - 1
-            if latest_index >= 0 and latest_index not in selected_rows:
-                selected_rows.append(latest_index)
-            return sorted(selected_rows)
-        elif triggered == "select-all":
-            return list(range(len(table_data)))
-        elif triggered == "clear-selection":
-            return []
-
-        return selected_rows
+        if ctx.triggered_id == "add-latest":
+            latest = max(available_ids)
+            if latest not in selected_ids:
+                selected_ids.append(latest)
+        return {"ids": selected_ids}
 
     @app.callback(
         Output("current-timestamp-display", "children"),
         Input("target-ts-store", "data"),
     )
-    def show_current_timestamp(target_ts):
-        if not target_ts:
+    def show_current_timestamp(target_timestamp):
+        if not target_timestamp:
             return "テストケース詳細 (選択されていません)"
-        return f"詳細表示: {target_ts}"
+        return f"詳細表示: {target_timestamp}"
 
     @app.callback(
-        Output("file-name-table", "data"),
+        Output("file-name-table", "rowData"),
         Input("target-ts-store", "data"),
         Input("base-store", "data"),
         Input("case-filter-check", "value"),
+        Input("result-version-store", "data"),
+        Input("case-edit-result-store", "data"),
     )
-    def update_file_table(target_ts, base_ts, case_filter):
-        if not target_ts:
-            return []
-        all_results = store.long_frame()
-        if all_results.empty:
-            return []
-
-        all_results["score"] = pd.to_numeric(all_results["score"], errors="coerce")
-
-        if store.direction == "minimize":
-            best_results = (
-                all_results.groupby("name")["score"]
-                .min()
-                .reset_index()
-                .rename(columns={"score": "best"})
-            )
-        else:
-            best_results = (
-                all_results.groupby("name")["score"]
-                .max()
-                .reset_index()
-                .rename(columns={"score": "best"})
-            )
-
-        selected_results = all_results[all_results["timestamp"] == target_ts].copy()
-
-        if base_ts:
-            baseline_results = all_results[all_results["timestamp"] == base_ts][
-                ["name", "score"]
-            ].rename(columns={"score": "base_score"})
-            selected_results = pd.merge(
-                selected_results,
-                baseline_results,
-                on="name",
-                how="left",
-            )
-            selected_results["rel"] = selected_results.apply(
-                lambda row: (
-                    row["score"] / row["base_score"]
-                    if pd.notna(row["base_score"]) and row["base_score"] != 0
-                    else 1.0
-                ),
-                axis=1,
-            )
-        else:
-            selected_results["rel"] = 1.0
-
-        selected_results = pd.merge(
-            selected_results, best_results, on="name", how="left"
+    def update_file_rows(
+        target_timestamp,
+        base_timestamp,
+        case_filter,
+        _result_version,
+        _case_edit_result,
+    ):
+        snapshot = store.snapshot()
+        filters = list(case_filter or [])
+        return build_case_rows(
+            snapshot.results,
+            target_timestamp,
+            base_timestamp,
+            store.direction,
+            metadata=snapshot.metadata,
+            non_accepted_only="non_ac" in filters,
+            comparison_filters=[value for value in filters if value != "non_ac"],
+            annotations=store.case_annotations(target_timestamp),
         )
-        selected_results["time"] = pd.to_numeric(
-            selected_results["time"], errors="coerce"
-        )
-
-        if "state" not in selected_results.columns:
-            selected_results["state"] = ""
-        if case_filter and "non_ac" in case_filter:
-            selected_results = selected_results[selected_results["state"] != "AC"]
-
-        records = selected_results[
-            ["name", "state", "score", "rel", "best", "time"]
-        ].to_dict("records")
-        for record in records:
-            record["id"] = record["name"]
-
-        return records
 
     @app.callback(
-        Output("file-name-table", "style_data_conditional"),
-        Input("file-name-table", "active_cell"),
+        Output("case-edit-result-store", "data"),
+        Input("file-name-table", "cellValueChanged"),
+        Input("file-name-table", "cellClicked"),
+        State("target-ts-store", "data"),
+        prevent_initial_call=True,
     )
-    def highlight_selected_case_row(active_cell):
-        """選択中ケースの行全体をハイライトする"""
-        styles = [
-            {
-                "if": {"filter_query": '{state} != "AC" && {state} != ""'},
-                "color": "#e57373",
-            },
-            {
-                "if": {
-                    "filter_query": '{state} != "AC" && {state} != ""',
-                    "column_id": "state",
-                },
-                "fontWeight": "bold",
-            },
-            {
-                "if": {"state": "active"},
-                "backgroundColor": "#3a3f47",
-                "border": "1px solid #444",
-            },
-        ]
-        if active_cell:
-            filename = active_cell.get("row_id")
-            if filename:
-                # 並べ替え後も追従するよう、行番号ではなくケース名で指定する
-                styles.append(
-                    {
-                        "if": {"filter_query": f'{{name}} = "{filename}"'},
-                        "backgroundColor": "#3a3f47",
-                    }
-                )
-            else:
-                styles.append(
-                    {
-                        "if": {"row_index": active_cell["row"]},
-                        "backgroundColor": "#3a3f47",
-                    }
-                )
-        return styles
+    def save_case_edit(change, clicked_cell, target_timestamp):
+        if not target_timestamp:
+            return dash.no_update
+        try:
+            if (
+                ctx.triggered_prop_id == "file-name-table.cellClicked"
+                and clicked_cell
+                and clicked_cell.get("colId") == "bookmark_str"
+            ):
+                case_id = str(clicked_cell.get("rowId") or "")
+                store.toggle_case_bookmark(str(target_timestamp), case_id)
+                return {"case_id": case_id, "error": None}
+
+            saved_case_ids = []
+            for changed_cell in _changed_cells(change):
+                if changed_cell.get("colId") != "case_memo":
+                    continue
+                case_id = str(changed_cell.get("rowId") or "")
+                new_value = changed_cell.get("newValue")
+                memo = "" if new_value is None else str(new_value)
+                store.save_case_memo(str(target_timestamp), case_id, memo)
+                saved_case_ids.append(case_id)
+            if saved_case_ids:
+                return {"case_id": saved_case_ids[-1], "error": None}
+        except (OSError, PermissionError, ValueError) as error:
+            return {"case_id": None, "error": str(error)}
+        return dash.no_update
+
+    @app.callback(
+        Output("file-name-table", "columnDefs"),
+        Input("result-version-store", "data"),
+        Input("case-column-groups", "value"),
+    )
+    def update_file_columns(_result_version, visible_groups):
+        metadata = store.snapshot().metadata
+        return config.case_column_defs(
+            store.direction,
+            parameter_column_specs(metadata),
+            visible_groups=visible_groups,
+            read_only=store.read_only,
+        )
+
+    @app.callback(
+        Output("file-name-table", "filterModel"),
+        Output("case-filter-check", "value"),
+        Input("clear-case-filters", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def clear_case_filters(_click_count):
+        return {}, []
+
+    @app.callback(
+        Output("file-name-table", "selectedRows"),
+        Output("file-name-table", "scrollTo"),
+        Input("previous-case", "n_clicks"),
+        Input("next-case", "n_clicks"),
+        State("file-name-table", "virtualRowData"),
+        State("file-name-table", "rowData"),
+        State("file-name-table", "selectedRows"),
+        prevent_initial_call=True,
+    )
+    def move_case(
+        _previous_clicks,
+        _next_clicks,
+        visible_rows,
+        all_rows,
+        selected_rows,
+    ):
+        rows = visible_rows if visible_rows is not None else all_rows
+        offset = -1 if ctx.triggered_id == "previous-case" else 1
+        row_id = adjacent_case_id(rows, selected_rows, offset)
+        if row_id is None:
+            return dash.no_update, dash.no_update
+        return {"ids": [row_id]}, {"rowId": row_id, "rowPosition": "middle"}
 
     @app.callback(
         Output("score-comparison-graph", "figure"),
         Output("summary-text", "children"),
-        Input("timestamp-table", "selected_rows"),
+        Input("timestamp-table", "selectedRows"),
         Input("graph-type", "value"),
         Input("param-selector", "value"),
         Input("param-selector-y", "value"),
         Input("log-scale-check", "value"),
+        Input("graph-reset", "n_clicks"),
         Input("target-ts-store", "data"),
-        State("table-data", "data"),
+        Input("result-version-store", "data"),
         State("base-store", "data"),
     )
     def update_graph(
-        rows, graph_type, param_x, param_y, log_scale, target_ts, table_data, base_ts
+        selected_rows,
+        graph_type,
+        param_x,
+        param_y,
+        log_scale,
+        reset_count,
+        target_timestamp,
+        _result_version,
+        base_timestamp,
     ):
+        snapshot = store.snapshot()
         return figures.build_graph(
             store,
-            rows,
+            snapshot,
+            selected_row_ids(selected_rows),
             graph_type,
             param_x,
             param_y,
             log_scale,
-            target_ts,
-            table_data,
-            base_ts,
+            target_timestamp,
+            base_timestamp,
+            reset_count=reset_count or 0,
         )
 
     @app.callback(
         Output("tab-content", "children"),
+        Output("detail-search-result", "children"),
         Input("detail-tabs", "value"),
-        Input("file-name-table", "active_cell"),
+        Input("file-name-table", "selectedRows"),
         Input("target-ts-store", "data"),
-        State("file-name-table", "data"),
+        Input("result-version-store", "data"),
+        Input("detail-search", "value"),
+        Input("detail-view-options", "value"),
         State("base-store", "data"),
-        State("table-data", "data"),
     )
-    def render_tab_content(tab, active_cell, target_ts, file_data, base_ts, table_data):
+    def render_tab_content(
+        tab,
+        selected_rows,
+        target_timestamp,
+        _result_version,
+        search,
+        view_options,
+        base_timestamp,
+    ):
+        snapshot = store.snapshot()
         return tabs.render_tab_content(
-            store, tab, active_cell, target_ts, file_data, base_ts, table_data
+            store,
+            snapshot,
+            tab,
+            _selected_case(selected_rows),
+            target_timestamp,
+            base_timestamp,
+            search=search,
+            view_options=view_options,
         )
 
     @app.callback(

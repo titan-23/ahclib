@@ -150,7 +150,7 @@ def create_app(
                         children=[
                             dcc.Input(
                                 id="search-input",
-                                placeholder="スコア/Action/Hash検索...",
+                                placeholder="スコア / Action / Hash 検索...",
                                 style={"padding": "5px"},
                             ),
                             html.Button(

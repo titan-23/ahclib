@@ -61,3 +61,27 @@ input[type="radio"], input[type="checkbox"] { accent-color: #29b6f6; cursor: poi
     background-color: #1e1e1e !important; color: #e0e0e0 !important;
     border-bottom: 2px solid #29b6f6 !important;
 }
+
+@media (max-width: 900px) {
+    body { overflow: auto; }
+    .layout-container { flex-direction: column; height: auto; min-height: 100vh; }
+    .sidebar-pinned, .sidebar-unpinned {
+        position: relative; width: 100%; min-width: 0; height: 55vh;
+        transform: none; box-shadow: none;
+    }
+    .sidebar-unpinned:hover { transform: none; box-shadow: none; }
+    .sidebar-unpinned::before, .sidebar-unpinned::after, .btn-pin { display: none; }
+    .sidebar-content { width: 100%; padding: 12px; }
+    .main-content { width: 100%; box-sizing: border-box; padding: 10px; overflow: visible; }
+    #detail-card {
+        flex-direction: column; min-height: 1000px !important;
+        overflow: visible !important;
+    }
+    #case-table-panel {
+        min-height: 480px; border-right: none !important;
+        border-bottom: 1px solid #333; box-sizing: border-box;
+    }
+    #case-detail-panel { min-height: 480px; }
+    .result-text-grid { grid-template-columns: minmax(0, 1fr) !important; }
+    .custom-tab { padding: 8px 4px !important; font-size: 11px !important; }
+}

@@ -8,8 +8,6 @@ from typing import Any, Optional, Sequence
 import click
 
 from .ahc_util import to_blue, to_bold
-from .optimizer import run_optimizer, run_optimizer_dashboard
-from .parallel_tester import run_test
 
 
 def load_class_from_path(
@@ -36,12 +34,30 @@ def _add_settings_argument(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _port_number(value: str) -> int:
+    port = int(value)
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError("port は 1 から 65535 で指定してください")
+    return port
+
+
 def get_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("setup")
-    subparsers.add_parser("vis")
+    vis_parser = subparsers.add_parser("vis")
+    vis_parser.add_argument(
+        "--tailscale",
+        action="store_true",
+        help="vis を Tailscale の tailnet 内へ読み取り専用で共有する",
+    )
+    vis_parser.add_argument(
+        "--port",
+        type=_port_number,
+        default=8050,
+        help="vis が使うローカル port (既定: 8050)",
+    )
     subparsers.add_parser("clear")
 
     test_parser = subparsers.add_parser("test")
@@ -116,9 +132,9 @@ def main() -> None:
     args = get_args()
 
     if args.command == "vis":
-        from .vis import create_app
+        from .vis import run_vis
 
-        create_app().run(debug=False)
+        run_vis(tailscale=args.tailscale, port=args.port)
         sys.exit(0)
 
     if args.command == "vis_beam":
@@ -139,6 +155,8 @@ def main() -> None:
         sys.exit(0)
 
     if args.command == "opt" and args.vis:
+        from .optimizer import run_optimizer_dashboard
+
         run_optimizer_dashboard(tailscale=args.tailscale)
         sys.exit(0)
 
@@ -177,6 +195,8 @@ def main() -> None:
     settings = load_class_from_path(file_path, class_name)
 
     if args.command == "test":
+        from .parallel_tester import run_test
+
         run_test(
             settings,
             settings.njobs,
@@ -186,6 +206,8 @@ def main() -> None:
             args.memo,
         )
     elif args.command == "opt":
+        from .optimizer import run_optimizer
+
         sampler = None
         pruner = None
         if args.wilcoxon:

@@ -1,4 +1,5 @@
-from dash import dcc, html, dash_table
+import dash_ag_grid as dag
+from dash import dcc, html
 from dash.development.base_component import Component
 
 from . import config
@@ -30,6 +31,8 @@ def _graph_type_radio() -> Component:
         ],
         value="abs",
         inline=True,
+        persistence=True,
+        persistence_type="session",
         style={"display": "flex", "gap": "12px"},
         labelStyle={
             "cursor": "pointer",
@@ -41,7 +44,7 @@ def _graph_type_radio() -> Component:
     )
 
 
-def _build_sidebar(direction: str) -> Component:
+def _build_sidebar(direction: str, read_only: bool) -> Component:
     return html.Div(
         id="sidebar-container",
         className="sidebar-base sidebar-pinned",
@@ -90,6 +93,25 @@ def _build_sidebar(direction: str) -> Component:
                                 n_clicks=0,
                             ),
                             html.Button(
+                                "◀ 直前を Base",
+                                id="previous-base",
+                                className="btn",
+                                n_clicks=0,
+                            ),
+                            dcc.Checklist(
+                                id="base-mode-check",
+                                options=[
+                                    {
+                                        "label": " Base を Target の直前へ追従",
+                                        "value": "previous",
+                                    }
+                                ],
+                                value=[],
+                                persistence=True,
+                                persistence_type="session",
+                                style={"fontSize": "12px", "alignSelf": "center"},
+                            ),
+                            html.Button(
                                 "✅ 全選択",
                                 id="select-all",
                                 className="btn",
@@ -133,22 +155,45 @@ def _build_sidebar(direction: str) -> Component:
                     html.Div(
                         style={"flex": "1", "overflowY": "auto"},
                         children=[
-                            dash_table.DataTable(
+                            dag.AgGrid(
                                 id="timestamp-table",
-                                columns=config.TIMESTAMP_TABLE_COLUMNS,
-                                style_table={"width": "100%"},
-                                style_cell=config.TABLE_STYLE_CELL,
-                                style_header=config.TABLE_STYLE_HEADER,
-                                style_data_conditional=config.timestamp_style_data_conditional(
-                                    direction
+                                columnDefs=config.run_column_defs(
+                                    direction,
+                                    read_only=read_only,
                                 ),
-                                row_selectable="multi",
-                                selected_rows=[],
+                                rowData=[],
+                                getRowId="params.data.id",
+                                selectedRows=[],
+                                defaultColDef={
+                                    "sortable": True,
+                                    "resizable": True,
+                                    "filter": True,
+                                    "minWidth": 80,
+                                },
+                                dashGridOptions={
+                                    "theme": config.GRID_THEME,
+                                    "animateRows": False,
+                                    "rowSelection": {
+                                        "mode": "multiRow",
+                                        "enableClickSelection": True,
+                                        "checkboxes": True,
+                                        "headerCheckbox": False,
+                                    },
+                                    "selectionColumnDef": {
+                                        "width": 44,
+                                        "pinned": "left",
+                                    },
+                                },
+                                style={"width": "100%", "height": "100%"},
                             )
                         ],
                     ),
                     html.Div(
-                        "※ Memo列をクリックでメモを編集・自動保存できます",
+                        (
+                            "読み取り専用モード"
+                            if read_only
+                            else "※ Memo 列と Tag 列は編集後に自動保存されます"
+                        ),
                         style={
                             "fontSize": "11px",
                             "color": "#888",
@@ -161,11 +206,12 @@ def _build_sidebar(direction: str) -> Component:
     )
 
 
-def _build_main() -> Component:
+def _build_main(direction: str, read_only: bool) -> Component:
     return html.Div(
         className="main-content",
         children=[
             html.Div(
+                id="graph-card",
                 className="card",
                 children=[
                     html.Div(
@@ -215,6 +261,8 @@ def _build_main() -> Component:
                                                         id="param-selector-y",
                                                         options=[],
                                                         clearable=False,
+                                                        persistence=True,
+                                                        persistence_type="session",
                                                         style={
                                                             "width": "80px",
                                                             "color": "#333",
@@ -234,6 +282,8 @@ def _build_main() -> Component:
                                                 id="param-selector",
                                                 options=[],
                                                 clearable=False,
+                                                persistence=True,
+                                                persistence_type="session",
                                                 style={
                                                     "width": "80px",
                                                     "color": "#333",
@@ -247,7 +297,7 @@ def _build_main() -> Component:
                                         options=[
                                             {
                                                 "label": html.Span(
-                                                    " Y軸をLogスケール",
+                                                    " Y 軸を Log スケール",
                                                     style={
                                                         "paddingLeft": "4px",
                                                         "color": "#e0e0e0",
@@ -257,12 +307,20 @@ def _build_main() -> Component:
                                             }
                                         ],
                                         value=[],
+                                        persistence=True,
+                                        persistence_type="session",
                                         labelStyle={
                                             "cursor": "pointer",
                                             "display": "flex",
                                             "alignItems": "center",
                                         },
                                         style={"fontSize": "13px"},
+                                    ),
+                                    html.Button(
+                                        "Zoom reset",
+                                        id="graph-reset",
+                                        className="btn",
+                                        n_clicks=0,
                                     ),
                                 ],
                             ),
@@ -272,6 +330,7 @@ def _build_main() -> Component:
                 ],
             ),
             html.Div(
+                id="detail-card",
                 className="card",
                 style={
                     "display": "flex",
@@ -283,6 +342,7 @@ def _build_main() -> Component:
                 },
                 children=[
                     html.Div(
+                        id="case-table-panel",
                         style={
                             "flex": "1",
                             "minWidth": "250px",
@@ -301,31 +361,97 @@ def _build_main() -> Component:
                                     "flexShrink": "0",
                                 },
                             ),
-                            dcc.Checklist(
-                                id="case-filter-check",
-                                options=[
-                                    {
-                                        "label": html.Span(
-                                            " 非ACのみ",
-                                            style={
-                                                "paddingLeft": "4px",
-                                                "color": "#e0e0e0",
-                                            },
-                                        ),
-                                        "value": "non_ac",
-                                    }
-                                ],
-                                value=[],
-                                labelStyle={
-                                    "cursor": "pointer",
+                            html.Div(
+                                style={
                                     "display": "flex",
                                     "alignItems": "center",
-                                },
-                                style={
-                                    "fontSize": "12px",
+                                    "gap": "10px",
                                     "marginBottom": "10px",
+                                    "flexWrap": "wrap",
                                     "flexShrink": "0",
                                 },
+                                children=[
+                                    dcc.Checklist(
+                                        id="case-filter-check",
+                                        options=[
+                                            {
+                                                "label": html.Span(
+                                                    " 非 AC のみ",
+                                                    style={
+                                                        "paddingLeft": "4px",
+                                                        "color": "#e0e0e0",
+                                                    },
+                                                ),
+                                                "value": "non_ac",
+                                            },
+                                            {"label": " 改善", "value": "improved"},
+                                            {"label": " 悪化", "value": "worsened"},
+                                            {"label": " 同点", "value": "same"},
+                                            {
+                                                "label": " 比較不能",
+                                                "value": "unavailable",
+                                            },
+                                            {"label": " 失敗", "value": "failed"},
+                                            {
+                                                "label": " Bookmark",
+                                                "value": "bookmarked",
+                                            },
+                                        ],
+                                        value=[],
+                                        inline=True,
+                                        labelStyle={
+                                            "cursor": "pointer",
+                                            "display": "flex",
+                                            "alignItems": "center",
+                                        },
+                                        style={"fontSize": "12px"},
+                                    ),
+                                    html.Button(
+                                        "フィルター解除",
+                                        id="clear-case-filters",
+                                        className="btn",
+                                        n_clicks=0,
+                                    ),
+                                    html.Span(
+                                        "各列の入力欄で絞り込み",
+                                        style={"fontSize": "11px", "color": "#888"},
+                                    ),
+                                    html.Button(
+                                        "↑ 前へ",
+                                        id="previous-case",
+                                        className="btn",
+                                        n_clicks=0,
+                                        title="現在の表示順で前のケースへ移動 (k)",
+                                    ),
+                                    html.Button(
+                                        "↓ 次へ",
+                                        id="next-case",
+                                        className="btn",
+                                        n_clicks=0,
+                                        title="現在の表示順で次のケースへ移動 (j)",
+                                    ),
+                                    dcc.Checklist(
+                                        id="case-column-groups",
+                                        options=[
+                                            {"label": " Score", "value": "score"},
+                                            {"label": " Rank", "value": "rank"},
+                                            {"label": " Time", "value": "time"},
+                                            {"label": " Best", "value": "best"},
+                                            {"label": " Params", "value": "params"},
+                                        ],
+                                        value=[
+                                            "score",
+                                            "rank",
+                                            "time",
+                                            "best",
+                                            "params",
+                                        ],
+                                        inline=True,
+                                        persistence=True,
+                                        persistence_type="session",
+                                        style={"fontSize": "12px"},
+                                    ),
+                                ],
                             ),
                             html.Div(
                                 style={
@@ -334,20 +460,52 @@ def _build_main() -> Component:
                                     "minHeight": "0",
                                 },
                                 children=[
-                                    dash_table.DataTable(
+                                    dag.AgGrid(
                                         id="file-name-table",
-                                        columns=config.FILE_TABLE_COLUMNS,
-                                        sort_action="native",
-                                        style_cell=config.FILE_TABLE_STYLE_CELL,
-                                        style_header=config.TABLE_STYLE_HEADER,
-                                        cell_selectable=True,
-                                        style_as_list_view=True,
+                                        columnDefs=config.case_column_defs(
+                                            direction,
+                                            read_only=read_only,
+                                        ),
+                                        rowData=[],
+                                        getRowId="params.data.id",
+                                        selectedRows=[],
+                                        eventListeners={
+                                            "cellKeyDown": [
+                                                "caseKeyNavigation(params, setGridProps)"
+                                            ]
+                                        },
+                                        defaultColDef={
+                                            "sortable": True,
+                                            "resizable": True,
+                                            "filter": True,
+                                            "floatingFilter": True,
+                                            "minWidth": 80,
+                                        },
+                                        dashGridOptions={
+                                            "theme": config.GRID_THEME,
+                                            "animateRows": False,
+                                            "rowSelection": {
+                                                "mode": "singleRow",
+                                                "enableClickSelection": True,
+                                                "checkboxes": False,
+                                                "headerCheckbox": False,
+                                            },
+                                            "multiSortKey": "ctrl",
+                                        },
+                                        persistence=True,
+                                        persistence_type="session",
+                                        persisted_props=["filterModel", "columnState"],
+                                        style={
+                                            "width": "100%",
+                                            "height": "100%",
+                                        },
                                     )
                                 ],
                             ),
                         ],
                     ),
                     html.Div(
+                        id="case-detail-panel",
                         style={
                             "flex": "3",
                             "display": "flex",
@@ -394,6 +552,42 @@ def _build_main() -> Component:
                                 ],
                             ),
                             html.Div(
+                                style={
+                                    "display": "flex",
+                                    "alignItems": "center",
+                                    "gap": "10px",
+                                    "padding": "8px 20px 0",
+                                    "flexWrap": "wrap",
+                                },
+                                children=[
+                                    dcc.Input(
+                                        id="detail-search",
+                                        type="text",
+                                        placeholder="表示内容を検索",
+                                        debounce=True,
+                                        persistence=True,
+                                        persistence_type="session",
+                                        style={"minWidth": "220px"},
+                                    ),
+                                    dcc.Checklist(
+                                        id="detail-view-options",
+                                        options=[
+                                            {"label": " 行を折り返す", "value": "wrap"},
+                                            {"label": " 全文表示", "value": "full"},
+                                        ],
+                                        value=["wrap"],
+                                        inline=True,
+                                        persistence=True,
+                                        persistence_type="session",
+                                        style={"fontSize": "12px"},
+                                    ),
+                                    html.Span(
+                                        id="detail-search-result",
+                                        style={"fontSize": "12px", "color": "#aaa"},
+                                    ),
+                                ],
+                            ),
+                            html.Div(
                                 id="tab-content",
                                 style={
                                     "flex": "1",
@@ -412,16 +606,38 @@ def _build_main() -> Component:
     )
 
 
-def build_layout(direction: str) -> Component:
+def build_layout(direction: str, read_only: bool = False) -> Component:
     return html.Div(
         className="layout-container",
         children=[
             dcc.Store(id="base-store"),
+            dcc.Store(id="base-request-store"),
             dcc.Store(id="table-data", data=[]),
-            dcc.Store(id="prev-selected-rows", data=[]),
             dcc.Store(id="target-ts-store", data=None),
-            html.Div(id="dummy-output", style={"display": "none"}),
-            _build_sidebar(direction),
-            _build_main(),
+            dcc.Store(id="result-version-store", data=0),
+            dcc.Store(id="pending-delete-store"),
+            dcc.Store(id="delete-result-store"),
+            dcc.Store(id="run-edit-result-store"),
+            dcc.Store(id="case-edit-result-store"),
+            dcc.ConfirmDialog(
+                id="delete-confirm",
+                message="この実行結果を削除しますか",
+            ),
+            html.Div(
+                "Tailscale 共有中 読み取り専用",
+                style={
+                    "display": "block" if read_only else "none",
+                    "backgroundColor": "#183a4a",
+                    "color": "#81d4fa",
+                    "padding": "6px 20px",
+                    "fontSize": "12px",
+                },
+            ),
+            html.Div(
+                id="status-banner",
+                style={"display": "none"},
+            ),
+            _build_sidebar(direction, read_only),
+            _build_main(direction, read_only),
         ],
     )
