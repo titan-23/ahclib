@@ -1,7 +1,8 @@
+from bisect import bisect_left, bisect_right
 import json
 import os
 import time
-from typing import Any, Callable, Optional
+from typing import Callable
 
 import dash
 import dash_cytoscape as cyto
@@ -16,24 +17,14 @@ from .config import (
     tab_style,
 )
 from .data import compute_compact_layout, load_and_process_data
-
-_DATA_CACHE: dict[str, Any] = {
-    "processed": {},
-    "compact_layout_cache": {},
-}
-_HISTORY_PATH = "history.json"
-_generate_board_visual: Optional[Callable[[str], Component]] = None
-_BOARD_CACHE: dict[str, Component] = {}
+from .store import BeamStore
 
 
 def create_app(
     generate_board_visual: Callable[[str], Component],
     history_path: str = "history.json",
 ) -> dash.Dash:
-    global _HISTORY_PATH, _generate_board_visual, _BOARD_CACHE
-    _HISTORY_PATH = history_path
-    _generate_board_visual = generate_board_visual
-    _BOARD_CACHE = {}
+    store = BeamStore(history_path, generate_board_visual)
 
     cyto.load_extra_layouts()
 
@@ -47,6 +38,7 @@ def create_app(
         update_title=None,
         suppress_callback_exceptions=True,
     )
+    app._ahclib_beam_store = store
 
     app.layout = html.Div(
         style={
@@ -542,26 +534,20 @@ def create_app(
         Input("keyboard-manager", "children"),
     )
     def load_data(n_clicks, _):
-        global _DATA_CACHE
         # ファイルが変わっていなければ前回の処理結果を使う
         try:
-            file_status = os.stat(_HISTORY_PATH)
-            file_signature = (file_status.st_mtime, file_status.st_size)
+            file_status = os.stat(store.history_path)
+            file_signature = (file_status.st_mtime_ns, file_status.st_size)
         except OSError:
             file_signature = None
         if (
             file_signature is not None
-            and _DATA_CACHE.get("file_sig") == file_signature
-            and _DATA_CACHE.get("processed")
+            and store.file_signature == file_signature
+            and store.processed
         ):
-            return {"ts": time.time()}, _DATA_CACHE.get("max_t", 1), None
-        processed, max_turn, marks = load_and_process_data(_HISTORY_PATH)
-        _DATA_CACHE["processed"] = processed
-        _DATA_CACHE["compact_layout_cache"] = {}
-        _DATA_CACHE["active_path_cache"] = {}
-        _DATA_CACHE["elements_cache"] = {}
-        _DATA_CACHE["max_t"] = max_turn
-        _DATA_CACHE["file_sig"] = file_signature
+            return {"ts": time.time()}, store.max_turn, None
+        processed, max_turn, _ = load_and_process_data(store.history_path)
+        store.replace(processed, max_turn, file_signature)
         return {"ts": time.time()}, max_turn, None
 
     @app.callback(
@@ -635,7 +621,7 @@ def create_app(
         if trigger == "fit-button.n_clicks" and current_elements:
             return current_elements, layout_config
 
-        processed = _DATA_CACHE.get("processed", {})
+        processed = store.processed
         nodes = processed.get("current_data", {}).get("nodes", [])
         if not nodes:
             return [], dash.no_update
@@ -649,8 +635,7 @@ def create_app(
             tree_direction,
             search_query or "",
         )
-        elements_cache = _DATA_CACHE.setdefault("elements_cache", {})
-        cached_elements = elements_cache.get(cache_key)
+        cached_elements = store.elements_cache.get(cache_key)
         if cached_elements is not None:
             return cached_elements, layout_config
 
@@ -663,40 +648,30 @@ def create_app(
 
         minimum_turn, maximum_turn = turn_range
 
-        latest_active_turn = maximum_turn
-        while latest_active_turn >= minimum_turn:
-            active_nodes = snapshots_dict.get(latest_active_turn, {}).get("active", [])
-            if active_nodes:
-                terminal_ids = {str(node_id) for node_id in active_nodes}
-                break
-            latest_active_turn -= 1
+        active_turns = processed.get("active_turns", ())
+        active_turn_index = bisect_right(active_turns, maximum_turn) - 1
+        if active_turn_index >= 0 and active_turns[active_turn_index] >= minimum_turn:
+            latest_active_turn = active_turns[active_turn_index]
+            active_nodes = snapshots_dict[latest_active_turn]["active"]
+            terminal_ids = {str(node_id) for node_id in active_nodes}
         else:
+            latest_active_turn = minimum_turn - 1
             terminal_ids = set()
 
         # 最後に生存ノードがあるターンから根までの経路を再利用する
-        active_path_cache = _DATA_CACHE.setdefault("active_path_cache", {})
-        active_path = active_path_cache.get(latest_active_turn)
+        active_path = store.active_path_cache.get(latest_active_turn)
         if active_path is None:
             active_path = set()
-            current_level = list(terminal_ids)
-            while current_level:
-                next_nodes = []
-                for node_id in current_level:
-                    if node_id in nodes_dict:
-                        active_path.add(node_id)
-                        parent_id = nodes_dict[node_id]["spid"]
-                        if parent_id != "-1" and parent_id not in active_path:
-                            next_nodes.append(parent_id)
-                current_level = next_nodes
+            for node_id in terminal_ids:
+                active_path.update(store.node_path(node_id).node_ids)
             active_path.add("-1")
-            active_path_cache[latest_active_turn] = active_path
+            store.active_path_cache[latest_active_turn] = active_path
 
         compact_mode = "compact" in visibility
         positions_map = base_positions
         if compact_mode and active_path:
-            compact_layout_cache = _DATA_CACHE.setdefault("compact_layout_cache", {})
             compact_cache_key = latest_active_turn
-            compact_positions = compact_layout_cache.get(compact_cache_key)
+            compact_positions = store.compact_layout_cache.get(compact_cache_key)
             if compact_positions is None:
                 raw_positions = compute_compact_layout(
                     active_path, children_dict, nodes_dict, root_id="-1"
@@ -713,21 +688,15 @@ def create_app(
                         "depth": depth,
                         "breadth_center": horizontal_position,
                     }
-                compact_layout_cache[compact_cache_key] = compact_positions
+                store.compact_layout_cache[compact_cache_key] = compact_positions
             positions_map = compact_positions
 
-        collapsed_set = set(collapsed_ids)
+        collapsed_set = set(collapsed_ids or [])
+        bookmarked_set = set(bookmarked_ids or [])
         # 折り畳んだノードの子孫だけを隠す
         hidden_ids = set()
-        if collapsed_set:
-            stack = []
-            for collapsed_id in collapsed_set:
-                stack.extend(children_dict.get(collapsed_id, []))
-            while stack:
-                hidden_id = stack.pop()
-                if hidden_id not in hidden_ids:
-                    hidden_ids.add(hidden_id)
-                    stack.extend(children_dict.get(hidden_id, []))
+        for collapsed_id in collapsed_set:
+            hidden_ids.update(store.subtree(collapsed_id).node_ids)
 
         show_pruned = "show_pruned" in visibility and not compact_mode
         use_heatmap = "heatmap" in visibility
@@ -761,11 +730,15 @@ def create_app(
         ]
 
         visible_ids = set()
-        for node in nodes:
-            node_id = node["sid"]
-            if node_id in hidden_ids:
-                continue
-            if minimum_turn <= node["turn"] <= maximum_turn:
+        nodes_by_turn = processed.get("nodes_by_turn", {})
+        node_turns = processed.get("node_turns", ())
+        first_turn_index = bisect_left(node_turns, minimum_turn)
+        last_turn_index = bisect_right(node_turns, maximum_turn)
+        for turn in node_turns[first_turn_index:last_turn_index]:
+            for node in nodes_by_turn[turn]:
+                node_id = node["sid"]
+                if node_id in hidden_ids:
+                    continue
                 if not show_pruned and node_id not in active_path:
                     continue
                 visible_ids.add(node_id)
@@ -810,9 +783,9 @@ def create_app(
             # 破棄ノードと無効ノードは文字を表示しない
             has_text = classes == "status-active" or classes == "status-answer"
 
-            if node_id in collapsed_ids:
+            if node_id in collapsed_set:
                 classes += " folded"
-            if node_id in bookmarked_ids:
+            if node_id in bookmarked_set:
                 classes += " bookmarked"
 
             if search_query and (
@@ -883,9 +856,7 @@ def create_app(
             "refresh": time.time(),
         }
 
-        if len(elements_cache) >= 64:
-            elements_cache.clear()
-        elements_cache[cache_key] = elements
+        store.elements_cache[cache_key] = elements
         return elements, layout_config
 
     @app.callback(
@@ -897,9 +868,11 @@ def create_app(
         # 統計タブを開いている時だけ図を作る
         if left_tab != "tab-stats":
             return dash.no_update
-        processed = _DATA_CACHE.get("processed")
+        processed = store.processed
         if not processed:
             return html.Div("データがありません", style={"padding": "20px"})
+        if store.turn_stats_content is not None:
+            return store.turn_stats_content
 
         turn_stats = processed.get("turn_stats", {})
         turns = sorted(int(turn) for turn in turn_stats)
@@ -1006,7 +979,7 @@ def create_app(
             plot_bgcolor=DARK_THEME["background"],
         )
         graph_style = {"marginTop": "10px", "height": "calc(100vh - 240px)"}
-        return [
+        content = [
             dcc.Tabs(
                 id="stats-sub-tabs",
                 value="tab-score-dist",
@@ -1043,6 +1016,8 @@ def create_app(
                 style={"height": "44px"},
             ),
         ]
+        store.turn_stats_content = content
+        return content
 
     @app.callback(
         Output("all-paths-graph", "figure"),
@@ -1054,33 +1029,38 @@ def create_app(
         # 全体スコア推移タブを開いている時だけ図を作る
         if left_tab != "tab-all-graph":
             return dash.no_update
-        processed = _DATA_CACHE.get("processed", {})
+        processed = store.processed
         nodes = processed.get("current_data", {}).get("nodes", [])
         if not nodes:
             return go.Figure()
 
         infinite_score = processed.get("current_data", {}).get("INF", 1e18)
         min_turn, max_turn = turn_range
+        cached_figure = store.all_graph_cache.get((min_turn, max_turn))
+        if cached_figure is not None:
+            return cached_figure
         nodes_by_id = processed.get("nodes_dict", {})
 
         turn_min_all = processed.get("turn_min_all", {})
         start_base_score = turn_min_all.get(min_turn, nodes[0]["score"])
 
         x, y = [], []
-        for node in nodes:
-            if (
-                not min_turn <= node["turn"] <= max_turn
-                or node["score"] >= infinite_score
-            ):
-                continue
+        nodes_by_turn = processed.get("nodes_by_turn", {})
+        node_turns = processed.get("node_turns", ())
+        first_turn_index = bisect_left(node_turns, min_turn)
+        last_turn_index = bisect_right(node_turns, max_turn)
+        for turn in node_turns[first_turn_index:last_turn_index]:
+            for node in nodes_by_turn[turn]:
+                if node["score"] >= infinite_score:
+                    continue
 
-            parent_id = str(node["parent_id"])
-            if parent_id != "-1" and parent_id in nodes_by_id:
-                x += [nodes_by_id[parent_id]["turn"], node["turn"], None]
-                y += [nodes_by_id[parent_id]["score"], node["score"], None]
-            elif parent_id == "-1":
-                x += [0, node["turn"], None]
-                y += [start_base_score, node["score"], None]
+                parent_id = node["spid"]
+                if parent_id != "-1" and parent_id in nodes_by_id:
+                    x += [nodes_by_id[parent_id]["turn"], node["turn"], None]
+                    y += [nodes_by_id[parent_id]["score"], node["score"], None]
+                elif parent_id == "-1":
+                    x += [0, node["turn"], None]
+                    y += [start_base_score, node["score"], None]
 
         fig = go.Figure(
             data=go.Scattergl(
@@ -1099,6 +1079,7 @@ def create_app(
             xaxis_title="Turn",
             yaxis_title="Score",
         )
+        store.all_graph_cache[(min_turn, max_turn)] = fig
         return fig
 
     @app.callback(
@@ -1146,7 +1127,7 @@ def create_app(
         ) and callback_context.triggered[0]["prop_id"].startswith("info-tabs")
         want_board = info_tab == "tab-state"
         want_score = info_tab == "tab-score"
-        processed = _DATA_CACHE.get("processed", {})
+        processed = store.processed
         if not processed:
             return (
                 html.Div(
@@ -1272,39 +1253,17 @@ def create_app(
                     ]
                 )
 
-                path_ids = []
-                node_id = str(target["node_id"])
-                while node_id != "-1" and node_id in nodes_dict:
-                    path_ids.append(node_id)
-                    node_id = str(nodes_dict.get(node_id, {}).get("parent_id", "-1"))
-                path_ids.append("-1")
-
-                action_seq = "".join(
-                    [
-                        nodes_dict[node_id].get("action", "")
-                        for node_id in path_ids[::-1]
-                        if node_id in nodes_dict
-                    ]
-                )
+                target_id = str(target["node_id"])
+                path_data = store.node_path(target_id)
+                path_ids = list(path_data.node_ids)
+                action_seq = path_data.action_sequence
                 if want_board:
-                    if action_seq not in _BOARD_CACHE:
-                        _BOARD_CACHE[action_seq] = _generate_board_visual(action_seq)
-                    state_visual = _BOARD_CACHE[action_seq]
+                    state_visual = store.board_cache.get(action_seq)
+                    if state_visual is None:
+                        state_visual = store.generate_board_visual(action_seq)
+                        store.board_cache[action_seq] = state_visual
 
-                subtree_node_ids, subtree_edge_ids, queue, target_id_str = (
-                    [],
-                    [],
-                    [str(target["node_id"])],
-                    str(target["node_id"]),
-                )
-                while queue:
-                    curr_node = queue.pop()
-                    if curr_node != target_id_str:
-                        subtree_node_ids.append(curr_node)
-                    if curr_node in children_dict:
-                        for child in children_dict[curr_node]:
-                            subtree_edge_ids.append(f"e{curr_node}_{child}")
-                            queue.append(child)
+                subtree_data = None if only_tab_switch else store.subtree(target_id)
 
                 if want_score:
                     path_scores = [
@@ -1369,27 +1328,17 @@ def create_app(
                         xaxis=dict(range=[0, max_turn], title="Turn"),
                     )
 
-                if subtree_node_ids:
+                if subtree_data is not None and subtree_data.node_ids:
                     new_styles.append(
                         {
-                            "selector": ",".join(
-                                [
-                                    f'node[id="{node_id}"]'
-                                    for node_id in subtree_node_ids
-                                ]
-                            ),
+                            "selector": subtree_data.node_selector,
                             "style": {"border-width": "3px", "border-color": "#ff9800"},
                         }
                     )
-                if subtree_edge_ids:
+                if subtree_data is not None and subtree_data.edge_ids:
                     new_styles.append(
                         {
-                            "selector": ",".join(
-                                [
-                                    f'edge[id="{edge_id}"]'
-                                    for edge_id in subtree_edge_ids
-                                ]
-                            ),
+                            "selector": subtree_data.edge_selector,
                             "style": {
                                 "width": 3,
                                 "line-color": "#ff9800",
@@ -1397,12 +1346,10 @@ def create_app(
                             },
                         }
                     )
-                if path_ids:
+                if not only_tab_switch and path_ids:
                     new_styles.append(
                         {
-                            "selector": ",".join(
-                                [f'node[id="{node_id}"]' for node_id in path_ids]
-                            ),
+                            "selector": path_data.node_selector,
                             "style": {
                                 "border-width": "3px",
                                 "border-color": DARK_THEME["highlight"],
@@ -1410,15 +1357,10 @@ def create_app(
                         }
                     )
 
-                path_edges_ids = [
-                    f"e{path_ids[i+1]}_{path_ids[i]}" for i in range(len(path_ids) - 1)
-                ]
-                if path_edges_ids:
+                if not only_tab_switch and path_data.edge_selector:
                     new_styles.append(
                         {
-                            "selector": ",".join(
-                                [f'edge[id="{edge_id}"]' for edge_id in path_edges_ids]
-                            ),
+                            "selector": path_data.edge_selector,
                             "style": {
                                 "width": 4,
                                 "line-color": DARK_THEME["highlight"],
@@ -1427,7 +1369,7 @@ def create_app(
                         }
                     )
 
-                if clicked_child:
+                if not only_tab_switch and clicked_child:
                     new_styles.append(
                         {
                             "selector": f'node[id="{clicked_child}"]',
@@ -1445,25 +1387,21 @@ def create_app(
                         }
                     )
 
-        if show_goal:
+        if show_goal and not only_tab_switch:
             goal_path_ids = processed.get("goal_path_ids", set())
             goal_edge_ids = processed.get("goal_edge_ids", set())
 
             if goal_path_ids:
                 new_styles.append(
                     {
-                        "selector": ",".join(
-                            [f'node[id="{node_id}"]' for node_id in goal_path_ids]
-                        ),
+                        "selector": processed.get("goal_node_selector", ""),
                         "style": {"border-width": "5px", "border-color": "#00e5ff"},
                     }
                 )
             if goal_edge_ids:
                 new_styles.append(
                     {
-                        "selector": ",".join(
-                            [f'edge[id="{edge_id}"]' for edge_id in goal_edge_ids]
-                        ),
+                        "selector": processed.get("goal_edge_selector", ""),
                         "style": {
                             "width": 6,
                             "line-color": "#00e5ff",
@@ -1490,18 +1428,15 @@ def create_app(
     def manage_folding(n_fold, n_fold_all, tap_data, collapsed):
         trigger = callback_context.triggered[0]["prop_id"]
         if "fold-all-pruned-button" in trigger:
-            nodes = (
-                _DATA_CACHE.get("processed", {})
-                .get("current_data", {})
-                .get("nodes", [])
-            )
-            pruned_ids = [str(n["node_id"]) for n in nodes if n["status"] == 1]
-            active_collapsed = [c for c in collapsed if c in pruned_ids]
+            pruned_ids = store.processed.get("pruned_ids", ())
+            pruned_set = set(pruned_ids)
+            active_collapsed = [c for c in collapsed if c in pruned_set]
             if active_collapsed:
-                collapsed = [c for c in collapsed if c not in pruned_ids]
+                collapsed = [c for c in collapsed if c not in pruned_set]
             else:
+                collapsed_set = set(collapsed)
                 collapsed.extend(
-                    [node_id for node_id in pruned_ids if node_id not in collapsed]
+                    [node_id for node_id in pruned_ids if node_id not in collapsed_set]
                 )
         elif (
             "toggle-fold-button" in trigger and tap_data and tap_data.get("id") != "-1"
@@ -1532,7 +1467,7 @@ def create_app(
                 bookmarks.append(node_id)
                 btn_label = "⭐ ブックマークを解除"
 
-        processed = _DATA_CACHE.get("processed", {})
+        processed = store.processed
         nodes_dict = processed.get("nodes_dict", {})
 
         elements = []

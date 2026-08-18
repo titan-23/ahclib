@@ -374,12 +374,6 @@ def load_and_process_data(
                 max(0, common_count - 1) if valid_active_ids else 0
             )
 
-    valid_scores = [
-        node["score"]
-        for node in history_data["nodes"]
-        if node["score"] < infinite_score
-    ]
-
     for statistics in turn_statistics.values():
         turn_scores = statistics["scores"]
         count = len(turn_scores)
@@ -397,6 +391,10 @@ def load_and_process_data(
     # コールバック内の文字列変換と色計算を避けるため描画値を事前に作る
     # あわせて全体グラフ用にターン別の最小スコアを集計する
     minimum_score_by_turn: dict[int, float] = {}
+    minimum_valid_score: float | None = None
+    maximum_valid_score: float | None = None
+    nodes_by_turn: dict[int, list[dict[str, Any]]] = {}
+    pruned_ids = []
     for node in history_data["nodes"]:
         node["sid"] = str(node["node_id"])
         node["spid"] = str(node["parent_id"])
@@ -409,15 +407,24 @@ def load_and_process_data(
         )
         turn = node["turn"]
         score = node["score"]
+        nodes_by_turn.setdefault(turn, []).append(node)
+        if node.get("status", 0) == 1:
+            pruned_ids.append(node["sid"])
         if turn not in minimum_score_by_turn or score < minimum_score_by_turn[turn]:
             minimum_score_by_turn[turn] = score
+        if score < infinite_score:
+            if minimum_valid_score is None or score < minimum_valid_score:
+                minimum_valid_score = score
+            if maximum_valid_score is None or score > maximum_valid_score:
+                maximum_valid_score = score
 
     # スコア推移グラフの y 軸範囲を事前に計算する
-    if valid_scores:
-        minimum_score = min(valid_scores)
-        maximum_score = max(valid_scores)
-        padding = (maximum_score - minimum_score) * 0.05
-        y_range = [minimum_score - padding, maximum_score + padding]
+    if minimum_valid_score is not None and maximum_valid_score is not None:
+        padding = (maximum_valid_score - minimum_valid_score) * 0.05
+        y_range = [
+            minimum_valid_score - padding,
+            maximum_valid_score + padding,
+        ]
     else:
         y_range = None
 
@@ -434,6 +441,8 @@ def load_and_process_data(
             goal_edge_ids.add(f"e{parent_id}_{current_node_id}")
             current_node_id = parent_id
         goal_path_ids.add("-1")
+    goal_node_selector = ",".join(f'node[id="{node_id}"]' for node_id in goal_path_ids)
+    goal_edge_selector = ",".join(f'edge[id="{edge_id}"]' for edge_id in goal_edge_ids)
 
     positions = compute_tree_layout(
         "-1",
@@ -459,29 +468,34 @@ def load_and_process_data(
             "breadth_center": positions.get(node_id, 0.0),
         }
 
-    nodes_sorted = sorted(nodes, key=lambda node: node.get("turn", 0))
-    max_turn = max([node["turn"] for node in nodes]) if nodes else 1
+    max_turn = max((node["turn"] for node in nodes), default=1)
+    node_turns = tuple(sorted(nodes_by_turn))
+    active_turns = tuple(
+        sorted(
+            turn
+            for turn, snapshot in snapshots_by_turn.items()
+            if snapshot.get("active")
+        )
+    )
 
     processed = {
         "current_data": history_data,
         "nodes_dict": nodes_by_id,
         "children_dict": children_by_parent,
         "snapshots_dict": snapshots_by_turn,
-        "valid_scores": valid_scores,
         "turn_stats": turn_statistics,
         "base_positions": base_positions,
-        "nodes_sorted": nodes_sorted,
+        "nodes_by_turn": nodes_by_turn,
+        "node_turns": node_turns,
+        "active_turns": active_turns,
+        "pruned_ids": tuple(pruned_ids),
         "turn_min_all": minimum_score_by_turn,
         "y_range": y_range,
         "goal_path_ids": goal_path_ids,
         "goal_edge_ids": goal_edge_ids,
+        "goal_node_selector": goal_node_selector,
+        "goal_edge_selector": goal_edge_selector,
         "max_t": max_turn,
     }
 
-    marks = {
-        turn: str(turn)
-        for turn in range(0, max_turn + 1)
-        if turn % 10 == 0 or turn == max_turn
-    }
-
-    return processed, max_turn, marks
+    return processed, max_turn, {}
