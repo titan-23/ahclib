@@ -36,7 +36,7 @@ GRID_THEME = {
 }
 
 NUMBER_FORMATTER = {
-    "function": "params.value == null ? '' : d3.format(',.3~g')(params.value)"
+    "function": "params.value == null ? '' : d3.format(',.12~f')(params.value)"
 }
 DECIMAL_FORMATTER = {
     "function": "params.value == null ? '' : d3.format(',.3f')(params.value)"
@@ -44,18 +44,9 @@ DECIMAL_FORMATTER = {
 
 RUN_COLUMN_DEFS = [
     {
-        "headerName": "Fav",
-        "field": "favorite_str",
-        "width": 58,
-        "pinned": "left",
-        "filter": False,
-        "sortable": True,
-        "cellStyle": {"textAlign": "center", "cursor": "pointer", "color": "#ffca28"},
-    },
-    {
         "headerName": "Base",
         "field": "is_base_str",
-        "width": 64,
+        "width": 58,
         "pinned": "left",
         "filter": False,
         "sortable": False,
@@ -64,7 +55,7 @@ RUN_COLUMN_DEFS = [
     {
         "headerName": "実行日時",
         "field": "formatted",
-        "minWidth": 145,
+        "width": 128,
         "filter": "agTextColumnFilter",
     },
     {
@@ -72,31 +63,7 @@ RUN_COLUMN_DEFS = [
         "headerTooltip": "AHCSettings.get_score",
         "field": "aggregate_score",
         "type": "numericColumn",
-        "valueFormatter": NUMBER_FORMATTER,
-    },
-    {
-        "headerName": "Ave",
-        "field": "average_score",
-        "type": "numericColumn",
-        "valueFormatter": NUMBER_FORMATTER,
-    },
-    {
-        "headerName": "Median",
-        "field": "median_score",
-        "type": "numericColumn",
-        "valueFormatter": NUMBER_FORMATTER,
-    },
-    {
-        "headerName": "IQR",
-        "field": "iqr_score",
-        "type": "numericColumn",
-        "valueFormatter": NUMBER_FORMATTER,
-    },
-    {
-        "headerName": "CI95 ±",
-        "headerTooltip": "算術平均の 95% 信頼区間の半幅 (正規近似)",
-        "field": "ci95_score",
-        "type": "numericColumn",
+        "width": 108,
         "valueFormatter": NUMBER_FORMATTER,
     },
     {
@@ -104,31 +71,55 @@ RUN_COLUMN_DEFS = [
         "headerTooltip": "Base との相対値の幾何平均",
         "field": "rel_geo",
         "type": "numericColumn",
+        "width": 72,
         "valueFormatter": DECIMAL_FORMATTER,
+    },
+    {
+        "headerName": "Median",
+        "field": "median_score",
+        "type": "numericColumn",
+        "width": 100,
+        "valueFormatter": NUMBER_FORMATTER,
+    },
+    {
+        "headerName": "IQR",
+        "field": "iqr_score",
+        "type": "numericColumn",
+        "width": 90,
+        "valueFormatter": NUMBER_FORMATTER,
+    },
+    {
+        "headerName": "CI95 ±",
+        "headerTooltip": "算術平均の 95% 信頼区間の半幅 (正規近似)",
+        "field": "ci95_score",
+        "type": "numericColumn",
+        "width": 90,
+        "valueFormatter": NUMBER_FORMATTER,
     },
     {
         "headerName": "Rel N/A",
         "field": "rel_missing",
         "type": "numericColumn",
-        "width": 88,
+        "width": 76,
     },
     {
         "headerName": "Std",
         "field": "std_score",
         "type": "numericColumn",
+        "width": 90,
         "valueFormatter": NUMBER_FORMATTER,
     },
     {
         "headerName": "Cases",
         "field": "case_count",
         "type": "numericColumn",
-        "width": 82,
+        "width": 68,
     },
     {
         "headerName": "NG",
         "field": "ng_cnt",
         "type": "numericColumn",
-        "width": 70,
+        "width": 52,
         "cellStyle": {"color": "#e57373", "fontWeight": "bold"},
     },
     {
@@ -136,7 +127,7 @@ RUN_COLUMN_DEFS = [
         "field": "tag",
         "editable": True,
         "singleClickEdit": True,
-        "minWidth": 110,
+        "width": 90,
         "filter": "agTextColumnFilter",
         "cellStyle": {"backgroundColor": "#2a2a2a"},
     },
@@ -145,14 +136,14 @@ RUN_COLUMN_DEFS = [
         "field": "memo",
         "editable": True,
         "singleClickEdit": True,
-        "minWidth": 160,
+        "width": 120,
         "filter": "agTextColumnFilter",
         "cellStyle": {"backgroundColor": "#2a2a2a"},
     },
     {
         "headerName": "",
         "field": "delete_btn",
-        "width": 54,
+        "width": 48,
         "pinned": "right",
         "filter": False,
         "sortable": False,
@@ -194,8 +185,6 @@ def run_column_defs(
     for column in columns:
         if column.get("field") in ("memo", "tag"):
             column["editable"] = False
-        if column.get("field") == "favorite_str":
-            column["cellStyle"] = {"textAlign": "center", "color": "#ffca28"}
     return columns
 
 

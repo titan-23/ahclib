@@ -22,6 +22,10 @@ def _changed_cells(change: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _triggered_property_id() -> Optional[str]:
+    return next(iter(ctx.triggered_prop_ids), None)
+
+
 def _selected_case(selected_rows: Any) -> Optional[dict[str, Any]]:
     if isinstance(selected_rows, list):
         return next((row for row in selected_rows if isinstance(row, dict)), None)
@@ -62,7 +66,7 @@ def register_callbacks(app: Dash, store: ResultStore) -> None:
     )
     def update_target_store(selected_rows, clicked_cell, current_target):
         selected_ids = selected_row_ids(selected_rows)
-        if ctx.triggered_prop_id == "timestamp-table.cellClicked" and clicked_cell:
+        if _triggered_property_id() == "timestamp-table.cellClicked" and clicked_cell:
             column_id = clicked_cell.get("colId")
             row_id = clicked_cell.get("rowId")
             if row_id is not None and column_id not in ("is_base_str", "delete_btn"):
@@ -156,7 +160,7 @@ def register_callbacks(app: Dash, store: ResultStore) -> None:
         base_mode,
     ):
         if (
-            ctx.triggered_prop_id == "timestamp-table.cellClicked"
+            _triggered_property_id() == "timestamp-table.cellClicked"
             and clicked_cell
             and clicked_cell.get("colId") == "is_base_str"
         ):
@@ -212,20 +216,10 @@ def register_callbacks(app: Dash, store: ResultStore) -> None:
     @app.callback(
         Output("run-edit-result-store", "data"),
         Input("timestamp-table", "cellValueChanged"),
-        Input("timestamp-table", "cellClicked"),
         prevent_initial_call=True,
     )
-    def save_run_edit(change, clicked_cell):
+    def save_run_edit(change):
         try:
-            if (
-                ctx.triggered_prop_id == "timestamp-table.cellClicked"
-                and clicked_cell
-                and clicked_cell.get("colId") == "favorite_str"
-            ):
-                timestamp = str(clicked_cell.get("rowId") or "")
-                store.toggle_favorite(timestamp)
-                return {"timestamp": timestamp, "error": None}
-
             saved_timestamps = []
             for changed_cell in _changed_cells(change):
                 column_id = changed_cell.get("colId")
@@ -270,7 +264,7 @@ def register_callbacks(app: Dash, store: ResultStore) -> None:
         previous_version,
         current_base,
     ):
-        triggered = ctx.triggered_prop_id
+        triggered = _triggered_property_id()
         if triggered == "reload-button.n_clicks":
             store.refresh()
 
@@ -422,7 +416,7 @@ def register_callbacks(app: Dash, store: ResultStore) -> None:
             return dash.no_update
         try:
             if (
-                ctx.triggered_prop_id == "file-name-table.cellClicked"
+                _triggered_property_id() == "file-name-table.cellClicked"
                 and clicked_cell
                 and clicked_cell.get("colId") == "bookmark_str"
             ):
@@ -500,7 +494,6 @@ def register_callbacks(app: Dash, store: ResultStore) -> None:
         Input("param-selector", "value"),
         Input("param-selector-y", "value"),
         Input("log-scale-check", "value"),
-        Input("graph-reset", "n_clicks"),
         Input("target-ts-store", "data"),
         Input("result-version-store", "data"),
         State("base-store", "data"),
@@ -511,7 +504,6 @@ def register_callbacks(app: Dash, store: ResultStore) -> None:
         param_x,
         param_y,
         log_scale,
-        reset_count,
         target_timestamp,
         _result_version,
         base_timestamp,
@@ -527,7 +519,6 @@ def register_callbacks(app: Dash, store: ResultStore) -> None:
             log_scale,
             target_timestamp,
             base_timestamp,
-            reset_count=reset_count or 0,
         )
 
     @app.callback(

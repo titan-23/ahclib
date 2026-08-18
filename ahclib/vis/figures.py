@@ -31,7 +31,6 @@ def build_graph(
     log_scale: Optional[list[str]],
     target_ts: Optional[str],
     base_ts: Optional[str],
-    reset_count: int = 0,
 ) -> tuple[go.Figure, str]:
     """グラフ種別に応じた Figure と要約文を返す"""
     direction = store.direction
@@ -508,7 +507,7 @@ def build_graph(
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         paper_bgcolor="#1e1e1e",
         plot_bgcolor="#1e1e1e",
-        uirevision=f"reset-{reset_count}",
+        uirevision="keep",
         yaxis_type=yaxis_type,
     )
 

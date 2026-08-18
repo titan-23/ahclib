@@ -168,7 +168,7 @@ def _build_sidebar(direction: str, read_only: bool) -> Component:
                                     "sortable": True,
                                     "resizable": True,
                                     "filter": True,
-                                    "minWidth": 80,
+                                    "minWidth": 48,
                                 },
                                 dashGridOptions={
                                     "theme": config.GRID_THEME,
@@ -316,12 +316,6 @@ def _build_main(direction: str, read_only: bool) -> Component:
                                         },
                                         style={"fontSize": "13px"},
                                     ),
-                                    html.Button(
-                                        "Zoom reset",
-                                        id="graph-reset",
-                                        className="btn",
-                                        n_clicks=0,
-                                    ),
                                 ],
                             ),
                         ],
@@ -338,7 +332,7 @@ def _build_main(direction: str, read_only: bool) -> Component:
                     "flex": "1",
                     "padding": "0",
                     "overflow": "hidden",
-                    "minHeight": "400px",
+                    "minHeight": "600px",
                 },
                 children=[
                     html.Div(

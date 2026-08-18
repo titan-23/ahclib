@@ -4,10 +4,13 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pandas as pd
 from dash import Dash, html
 
+from ahclib.vis import callbacks as vis_callbacks
 from ahclib.vis.app import _register_visualizer_route
 from ahclib.vis.callbacks import adjacent_case_id
 from ahclib.vis.config import case_column_defs
@@ -49,6 +52,23 @@ def _find_component(component, component_id: str):
         if found is not None:
             return found
     return None
+
+
+class CallbackContextTest(unittest.TestCase):
+    def test_triggered_property_id(self) -> None:
+        callback_context = SimpleNamespace(
+            triggered_prop_ids={"timestamp-table.cellClicked": "timestamp-table"}
+        )
+        with patch.object(vis_callbacks, "ctx", callback_context):
+            self.assertEqual(
+                vis_callbacks._triggered_property_id(),
+                "timestamp-table.cellClicked",
+            )
+
+    def test_triggered_property_id_returns_none_without_trigger(self) -> None:
+        callback_context = SimpleNamespace(triggered_prop_ids={})
+        with patch.object(vis_callbacks, "ctx", callback_context):
+            self.assertIsNone(vis_callbacks._triggered_property_id())
 
 
 class ResultStoreTest(unittest.TestCase):
@@ -486,6 +506,7 @@ class GridLayoutTest(unittest.TestCase):
 
         self.assertIsNotNone(run_grid)
         self.assertIsNotNone(case_grid)
+        self.assertIsNone(_find_component(layout, "graph-reset"))
         self.assertEqual(run_grid.getRowId, "params.data.id")
         self.assertEqual(case_grid.getRowId, "params.data.id")
         self.assertEqual(
@@ -499,6 +520,21 @@ class GridLayoutTest(unittest.TestCase):
         self.assertTrue(case_grid.defaultColDef["floatingFilter"])
         self.assertIn("cellKeyDown", case_grid.eventListeners)
         self.assertIn("columnState", case_grid.persisted_props)
+
+        detail_card = _find_component(layout, "detail-card")
+        self.assertEqual(detail_card.style["minHeight"], "600px")
+
+        run_fields = [column["field"] for column in run_grid.columnDefs]
+        total_index = run_fields.index("aggregate_score")
+        self.assertNotIn("favorite_str", run_fields)
+        self.assertNotIn("average_score", run_fields)
+        self.assertEqual(run_fields[total_index + 1], "rel_geo")
+        self.assertEqual(run_grid.defaultColDef["minWidth"], 48)
+        self.assertTrue(all("width" in column for column in run_grid.columnDefs))
+        self.assertEqual(
+            run_grid.columnDefs[total_index]["valueFormatter"]["function"],
+            "params.value == null ? '' : d3.format(',.12~f')(params.value)",
+        )
 
     def test_read_only_layout_disables_edit_and_delete_columns(self) -> None:
         layout = build_layout("minimize", read_only=True)
