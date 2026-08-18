@@ -58,7 +58,7 @@ def _stop_process(process: subprocess.Popen[str]) -> None:
 
 @dataclass
 class TailscaleServe:
-    """A foreground Tailscale Serve session tied to this process."""
+    """ahclib と同時に終了する Tailscale Serve の実行状態"""
 
     process: subprocess.Popen[str]
     private_url: str
@@ -112,19 +112,18 @@ class TailscaleServe:
                 if private_url is not None:
                     return cls(process=process, private_url=private_url)
 
-                # The first Serve run can print a consent URL. Keep it visible so
-                # the user can enable HTTPS without running another command.
-                logger.info("- tailscale      : %s", line)
+                # 初回は HTTPS を有効にするための確認 URL が表示される
+                logger.info("- tailscale     : %s", line)
 
-            detail = "\n".join(startup_messages[-10:]) or "no output"
+            recent_output = "\n".join(startup_messages[-10:]) or "no output"
             if process.poll() is None:
                 raise RuntimeError(
                     "Tailscale Serve startup was not confirmed within "
                     f"{startup_timeout:g} seconds. Follow any consent URL above "
                     "and try again.\n"
-                    f"Tailscale output:\n{detail}"
+                    f"Tailscale output:\n{recent_output}"
                 )
-            raise RuntimeError(f"Tailscale Serve failed to start:\n{detail}")
+            raise RuntimeError(f"Tailscale Serve failed to start:\n{recent_output}")
         except BaseException:
             _stop_process(process)
             raise

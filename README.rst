@@ -97,20 +97,30 @@ tailnet 内だけに共有される。インターネット一般には公開さ
 初回導入
 """"""""
 
-1. ahclibを実行するPCへTailscaleをインストールする。
+1. ahclibを実行するLinux環境へTailscaleをインストールする。
 
-   - Windows: `Windowsインストール手順 <https://tailscale.com/docs/install/windows>`_
-   - Linux/WSL: `Linuxインストール手順 <https://tailscale.com/docs/install/linux>`_
+   - `Linuxインストール手順 <https://tailscale.com/docs/install/linux>`_
 
-   Linux/WSLでは、公式のインストールscriptを使う場合は以下になる。
+   WSLとUbuntu/Linuxのどちらも、公式のインストールscriptを使う場合は
+   以下になる。
 
    .. code-block:: shell
 
        curl -fsSL https://tailscale.com/install.sh | sh
        sudo tailscale up
+       tailscale status
 
-   ahclibをWindows Pythonで動かすならWindows側、WSL内で動かすならWSL側へ
-   インストールする。DashboardとTailscale CLIが同じ実行環境にある必要がある。
+   ``tailscale status`` に自分の端末が表示されれば準備完了である。
+   daemonへ接続できない場合は、次を実行してから ``sudo tailscale up`` を
+   やり直す。
+
+   .. code-block:: shell
+
+       sudo systemctl enable --now tailscaled
+
+   Windows側にインストールしたTailscaleは、WSL内の ``tailscale`` command
+   とは別物である。ahclibをWSLで動かす場合は、WSL内にもインストールする。
+   別PCのUbuntu/Linuxで動かす場合も、そのPCへ同じ手順でインストールする。
 
 2. 表示に使うスマホへTailscaleをインストールする。
 

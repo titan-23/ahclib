@@ -1,54 +1,76 @@
+from typing import Any, Optional
+
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
+
+from .data import ResultStore
 
 
-def add_ts_count_label(frame, sorted_ts):
-    """凡例用の `timestamp (n=件数)` ラベル列を追加し 表示順のリストを返す"""
+def add_ts_count_label(
+    frame: pd.DataFrame,
+    sorted_timestamps: list[str],
+) -> list[str]:
+    """凡例用の ``timestamp (n=件数)`` 列を追加して表示順を返す"""
     counts = frame.groupby("timestamp").size()
-    frame["ts_label"] = frame["timestamp"].map(lambda t: f"{t} (n={counts.get(t, 0)})")
-    return [f"{t} (n={counts.get(t, 0)})" for t in sorted_ts]
+    frame["ts_label"] = frame["timestamp"].map(
+        lambda timestamp: f"{timestamp} (n={counts.get(timestamp, 0)})"
+    )
+    return [
+        f"{timestamp} (n={counts.get(timestamp, 0)})" for timestamp in sorted_timestamps
+    ]
 
 
 def build_graph(
-    store, rows, graph_type, param_x, param_y, log_scale, target_ts, table_data, base_ts
-):
-    """グラフ種別に応じた figure と要約テキストを返す"""
+    store: ResultStore,
+    rows: Optional[list[int]],
+    graph_type: str,
+    param_x: Optional[str],
+    param_y: Optional[str],
+    log_scale: Optional[list[str]],
+    target_ts: Optional[str],
+    table_data: list[dict[str, Any]],
+    base_ts: Optional[str],
+) -> tuple[go.Figure, str]:
+    """グラフ種別に応じた Figure と要約文を返す"""
     direction = store.direction
 
-    valid_rows = [r for r in rows if r < len(table_data)] if rows else []
+    valid_rows = [row for row in rows if row < len(table_data)] if rows else []
     if not valid_rows or not target_ts:
-        fig = px.line(title="（実行結果が選択されていません）")
-        fig.update_layout(
+        figure = px.line(title="（実行結果が選択されていません）")
+        figure.update_layout(
             template="plotly_dark",
             margin=dict(l=20, r=20, t=20, b=20),
             paper_bgcolor="#1e1e1e",
             plot_bgcolor="#1e1e1e",
         )
-        return fig, ""
+        return figure, ""
 
     selected_timestamps = [table_data[i]["timestamp"] for i in valid_rows]
 
-    df_all = store.long_frame()
+    all_results = store.long_frame()
 
-    all_timestamps = sorted(df_all["timestamp"].unique())
+    all_timestamps = sorted(all_results["timestamp"].unique())
     if base_ts not in all_timestamps:
         base_ts = all_timestamps[0] if all_timestamps else None
 
-    df = df_all[df_all["timestamp"].isin(selected_timestamps)]
-    df = df[pd.to_numeric(df["score"], errors="coerce").notna()]
-    if not df.empty:
-        df["score"] = df["score"].astype(float)
+    selected_results = all_results[all_results["timestamp"].isin(selected_timestamps)]
+    selected_results = selected_results[
+        pd.to_numeric(selected_results["score"], errors="coerce").notna()
+    ]
+    if not selected_results.empty:
+        selected_results["score"] = selected_results["score"].astype(float)
 
-    if df.empty:
-        fig = px.line(title="（表示するデータがありません）")
-        return fig, ""
+    if selected_results.empty:
+        figure = px.line(title="（表示するデータがありません）")
+        return figure, ""
 
-    sorted_ts = sorted(selected_timestamps)
+    sorted_timestamps = sorted(selected_timestamps)
 
     if graph_type == "abs":
-        label_order = add_ts_count_label(df, sorted_ts)
-        fig = px.line(
-            df,
+        label_order = add_ts_count_label(selected_results, sorted_timestamps)
+        figure = px.line(
+            selected_results,
             x="test_id",
             y="score",
             color="ts_label",
@@ -57,24 +79,26 @@ def build_graph(
             labels={"ts_label": "timestamp"},
             render_mode="webgl",
         )
-        fig.update_layout(yaxis_title="Score")
+        figure.update_layout(yaxis_title="Score")
 
     elif graph_type == "rel":
-        base_df = df_all[df_all["timestamp"] == base_ts][["test_id", "score"]].rename(
-            columns={"score": "base_score"}
+        baseline_results = all_results[all_results["timestamp"] == base_ts][
+            ["test_id", "score"]
+        ].rename(columns={"score": "base_score"})
+        merged_results = pd.merge(
+            selected_results, baseline_results, on="test_id", how="left"
         )
-        merged = pd.merge(df, base_df, on="test_id", how="left")
-        merged["relative_score"] = merged.apply(
-            lambda r: (
-                r["score"] / r["base_score"]
-                if pd.notna(r["base_score"]) and r["base_score"] != 0
+        merged_results["relative_score"] = merged_results.apply(
+            lambda row: (
+                row["score"] / row["base_score"]
+                if pd.notna(row["base_score"]) and row["base_score"] != 0
                 else 1.0
             ),
             axis=1,
         )
-        label_order = add_ts_count_label(merged, sorted_ts)
-        fig = px.line(
-            merged,
+        label_order = add_ts_count_label(merged_results, sorted_timestamps)
+        figure = px.line(
+            merged_results,
             x="test_id",
             y="relative_score",
             color="ts_label",
@@ -83,34 +107,46 @@ def build_graph(
             labels={"ts_label": "timestamp"},
             render_mode="webgl",
         )
-        fig.add_hline(
+        figure.add_hline(
             y=1.0,
             line_dash="dash",
             line_color="#888",
             annotation_text=f"Base: {base_ts}",
         )
-        fig.update_layout(yaxis_title="Relative Score")
+        figure.update_layout(yaxis_title="Relative Score")
 
     elif graph_type == "box":
-        counts = df.groupby("timestamp").size()
-        df["ts_with_count"] = df["timestamp"].apply(
-            lambda t: f"{t}<br>(n={counts.get(t,0)})"
+        counts = selected_results.groupby("timestamp").size()
+        selected_results["ts_with_count"] = selected_results["timestamp"].apply(
+            lambda timestamp: f"{timestamp}<br>(n={counts.get(timestamp,0)})"
         )
-        sorted_ts_labels = [f"{t}<br>(n={counts.get(t,0)})" for t in sorted_ts]
-        fig = px.box(df, x="ts_with_count", y="score", color="timestamp")
-        fig.update_xaxes(categoryorder="array", categoryarray=sorted_ts_labels)
-        fig.update_layout(xaxis_title="Execution", yaxis_title="Score")
+        sorted_timestamp_labels = [
+            f"{timestamp}<br>(n={counts.get(timestamp,0)})"
+            for timestamp in sorted_timestamps
+        ]
+        figure = px.box(
+            selected_results,
+            x="ts_with_count",
+            y="score",
+            color="timestamp",
+        )
+        figure.update_xaxes(
+            categoryorder="array", categoryarray=sorted_timestamp_labels
+        )
+        figure.update_layout(xaxis_title="Execution", yaxis_title="Score")
 
     elif graph_type.startswith("param_"):
-        param_col = param_x
-        meta_df = store.meta()
-        if not meta_df.empty and param_col in meta_df.columns:
-            merged = pd.merge(df, meta_df, on="test_id", how="left")
+        parameter_column = param_x
+        metadata = store.meta()
+        if not metadata.empty and parameter_column in metadata.columns:
+            merged_results = pd.merge(
+                selected_results, metadata, on="test_id", how="left"
+            )
             if graph_type == "param_scatter":
-                label_order = add_ts_count_label(merged, sorted_ts)
-                fig = px.scatter(
-                    merged,
-                    x=param_col,
+                label_order = add_ts_count_label(merged_results, sorted_timestamps)
+                figure = px.scatter(
+                    merged_results,
+                    x=parameter_column,
                     y="score",
                     color="ts_label",
                     hover_data=["test_id"],
@@ -119,232 +155,294 @@ def build_graph(
                     render_mode="webgl",
                 )
             elif graph_type == "param_box":
-                counts = merged.groupby(param_col)["test_id"].nunique()
-                merged["param_label"] = merged[param_col].apply(
-                    lambda v: f"{v} (n={counts.get(v, 0)})"
+                counts = merged_results.groupby(parameter_column)["test_id"].nunique()
+                merged_results["param_label"] = merged_results[parameter_column].apply(
+                    lambda value: f"{value} (n={counts.get(value, 0)})"
                 )
                 label_order = [
-                    f"{v} (n={counts.get(v, 0)})"
-                    for v in sorted(merged[param_col].dropna().unique())
+                    f"{value} (n={counts.get(value, 0)})"
+                    for value in sorted(
+                        merged_results[parameter_column].dropna().unique()
+                    )
                 ]
-                fig = px.box(
-                    merged,
+                figure = px.box(
+                    merged_results,
                     x="param_label",
                     y="score",
                     color="timestamp",
                     category_orders={
-                        "timestamp": sorted_ts,
+                        "timestamp": sorted_timestamps,
                         "param_label": label_order,
                     },
                 )
             elif graph_type == "param_line":
-                counts = merged.groupby(param_col)["test_id"].nunique()
-                avg_df = (
-                    merged.groupby([param_col, "timestamp"])["score"]
+                counts = merged_results.groupby(parameter_column)["test_id"].nunique()
+                averaged_results = (
+                    merged_results.groupby([parameter_column, "timestamp"])["score"]
                     .mean()
                     .reset_index()
                 )
-                avg_df["param_label"] = avg_df[param_col].apply(
-                    lambda v: f"{v} (n={counts.get(v, 0)})"
-                )
+                averaged_results["param_label"] = averaged_results[
+                    parameter_column
+                ].apply(lambda value: f"{value} (n={counts.get(value, 0)})")
                 label_order = [
-                    f"{v} (n={counts.get(v, 0)})"
-                    for v in sorted(avg_df[param_col].dropna().unique())
+                    f"{value} (n={counts.get(value, 0)})"
+                    for value in sorted(
+                        averaged_results[parameter_column].dropna().unique()
+                    )
                 ]
-                fig = px.line(
-                    avg_df,
+                figure = px.line(
+                    averaged_results,
                     x="param_label",
                     y="score",
                     color="timestamp",
                     markers=True,
                     category_orders={
-                        "timestamp": sorted_ts,
+                        "timestamp": sorted_timestamps,
                         "param_label": label_order,
                     },
                 )
-            fig.update_layout(
-                xaxis_title=f"Parameter: {param_col}", yaxis_title="Score"
+            figure.update_layout(
+                xaxis_title=f"Parameter: {parameter_column}",
+                yaxis_title="Score",
             )
 
     elif graph_type in ["difficulty_box", "difficulty_heatmap"]:
-        n = len(selected_timestamps)
-        summary_msg = f"CV分析: {n}件の実行結果"
-        if n < 2:
-            summary_msg += " ⚠️ 2件以上選択してください"
-        df_cv = df_all[df_all["timestamp"].isin(selected_timestamps)].copy()
-        df_cv["score"] = pd.to_numeric(df_cv["score"], errors="coerce")
-        df_cv = df_cv.dropna(subset=["score"])
+        selection_count = len(selected_timestamps)
+        summary_text = f"CV分析: {selection_count}件の実行結果"
+        if selection_count < 2:
+            summary_text += " ⚠️ 2件以上選択してください"
+        variation_results = all_results[
+            all_results["timestamp"].isin(selected_timestamps)
+        ].copy()
+        variation_results["score"] = pd.to_numeric(
+            variation_results["score"], errors="coerce"
+        )
+        variation_results = variation_results.dropna(subset=["score"])
 
-        cv_df = (
-            df_cv.groupby("test_id")["score"]
+        coefficient_variation = (
+            variation_results.groupby("test_id")["score"]
             .agg(
-                cv=lambda x: x.std() / x.mean() if x.mean() != 0 and len(x) > 1 else 0.0
+                cv=lambda scores: (
+                    scores.std() / scores.mean()
+                    if scores.mean() != 0 and len(scores) > 1
+                    else 0.0
+                )
             )
             .reset_index()
         )
 
-        meta_df = store.meta()
-        param_col = param_x
+        metadata = store.meta()
+        parameter_column = param_x
 
-        if meta_df.empty or param_col not in meta_df.columns:
-            fig = px.scatter(title="（パラメータ情報を取得できませんでした）")
-            fig.update_layout(paper_bgcolor="#1e1e1e", plot_bgcolor="#1e1e1e")
+        if metadata.empty or parameter_column not in metadata.columns:
+            figure = px.scatter(title="（パラメータ情報を取得できませんでした）")
+            figure.update_layout(paper_bgcolor="#1e1e1e", plot_bgcolor="#1e1e1e")
         else:
-            merged = pd.merge(cv_df, meta_df, on="test_id", how="left")
-            merged[param_col] = pd.to_numeric(merged[param_col], errors="coerce")
-            merged = merged.dropna(subset=[param_col])
+            merged_results = pd.merge(
+                coefficient_variation, metadata, on="test_id", how="left"
+            )
+            merged_results[parameter_column] = pd.to_numeric(
+                merged_results[parameter_column], errors="coerce"
+            )
+            merged_results = merged_results.dropna(subset=[parameter_column])
 
             if graph_type == "difficulty_box":
-                counts = merged.groupby(param_col)["test_id"].nunique()
-                merged["param_label"] = merged[param_col].apply(
-                    lambda v: f"{v} (n={counts.get(v, 0)})"
+                counts = merged_results.groupby(parameter_column)["test_id"].nunique()
+                merged_results["param_label"] = merged_results[parameter_column].apply(
+                    lambda value: f"{value} (n={counts.get(value, 0)})"
                 )
                 label_order = [
-                    f"{v} (n={counts.get(v, 0)})"
-                    for v in sorted(merged[param_col].dropna().unique())
+                    f"{value} (n={counts.get(value, 0)})"
+                    for value in sorted(
+                        merged_results[parameter_column].dropna().unique()
+                    )
                 ]
-                fig = px.box(
-                    merged,
+                figure = px.box(
+                    merged_results,
                     x="param_label",
                     y="cv",
                     labels={
-                        "param_label": f"Parameter: {param_col}",
+                        "param_label": f"Parameter: {parameter_column}",
                         "cv": "CV (std/mean)",
                     },
                     category_orders={"param_label": label_order},
                 )
-                fig.update_traces(marker_color="#29b6f6")
+                figure.update_traces(marker_color="#29b6f6")
 
             else:
-                param_col_y = param_y
-                if param_col_y not in meta_df.columns:
-                    fig = px.scatter(
+                y_parameter_column = param_y
+                if y_parameter_column not in metadata.columns:
+                    figure = px.scatter(
                         title="（Y軸パラメータ情報を取得できませんでした）"
                     )
-                    fig.update_layout(paper_bgcolor="#1e1e1e", plot_bgcolor="#1e1e1e")
-                else:
-                    merged[param_col_y] = pd.to_numeric(
-                        merged[param_col_y], errors="coerce"
+                    figure.update_layout(
+                        paper_bgcolor="#1e1e1e",
+                        plot_bgcolor="#1e1e1e",
                     )
-                    merged = merged.dropna(subset=[param_col_y])
-                    cnt_x = merged.groupby(param_col)["test_id"].nunique()
-                    cnt_y = merged.groupby(param_col_y)["test_id"].nunique()
-                    avg_cv = (
-                        merged.groupby([param_col_y, param_col])["cv"]
+                else:
+                    merged_results[y_parameter_column] = pd.to_numeric(
+                        merged_results[y_parameter_column], errors="coerce"
+                    )
+                    merged_results = merged_results.dropna(subset=[y_parameter_column])
+                    x_counts = merged_results.groupby(parameter_column)[
+                        "test_id"
+                    ].nunique()
+                    y_counts = merged_results.groupby(y_parameter_column)[
+                        "test_id"
+                    ].nunique()
+                    average_variation = (
+                        merged_results.groupby([y_parameter_column, parameter_column])[
+                            "cv"
+                        ]
                         .mean()
                         .reset_index()
                     )
-                    pivot_df = avg_cv.pivot(
-                        index=param_col_y, columns=param_col, values="cv"
+                    pivot_table = average_variation.pivot(
+                        index=y_parameter_column,
+                        columns=parameter_column,
+                        values="cv",
                     )
-                    pivot_df = pivot_df.sort_index().sort_index(axis=1).astype(float)
+                    pivot_table = (
+                        pivot_table.sort_index().sort_index(axis=1).astype(float)
+                    )
 
-                    fig = px.imshow(
-                        pivot_df.values,
+                    figure = px.imshow(
+                        pivot_table.values,
                         labels=dict(
-                            x=f"{param_col}", y=f"{param_col_y}", color="CV Mean"
+                            x=f"{parameter_column}",
+                            y=f"{y_parameter_column}",
+                            color="CV Mean",
                         ),
-                        x=[f"{x} (n={cnt_x.get(x, 0)})" for x in pivot_df.columns],
-                        y=[f"{y} (n={cnt_y.get(y, 0)})" for y in pivot_df.index],
+                        x=[
+                            f"{value} (n={x_counts.get(value, 0)})"
+                            for value in pivot_table.columns
+                        ],
+                        y=[
+                            f"{value} (n={y_counts.get(value, 0)})"
+                            for value in pivot_table.index
+                        ],
                         aspect="auto",
                         color_continuous_scale=[[0.0, "#1e1e1e"], [1.0, "#f44336"]],
                         origin="lower",
                         text_auto=".3f",
                     )
-                    fig.update_layout(
-                        xaxis_title=f"Parameter: {param_col}",
-                        yaxis_title=f"Parameter: {param_col_y}",
+                    figure.update_layout(
+                        xaxis_title=f"Parameter: {parameter_column}",
+                        yaxis_title=f"Parameter: {y_parameter_column}",
                     )
 
     elif graph_type in ["heatmap_abs", "heatmap_rel"]:
-        meta_df = store.meta()
+        metadata = store.meta()
         if (
-            not meta_df.empty
-            and param_x in meta_df.columns
-            and param_y in meta_df.columns
+            not metadata.empty
+            and param_x in metadata.columns
+            and param_y in metadata.columns
         ):
-            df_hm = df_all[df_all["timestamp"] == target_ts]
-            df_hm = df_hm[pd.to_numeric(df_hm["score"], errors="coerce").notna()]
-            df_hm["score"] = df_hm["score"].astype(float)
+            heatmap_results = all_results[all_results["timestamp"] == target_ts]
+            heatmap_results = heatmap_results[
+                pd.to_numeric(heatmap_results["score"], errors="coerce").notna()
+            ]
+            heatmap_results["score"] = heatmap_results["score"].astype(float)
 
-            merged = pd.merge(df_hm, meta_df, on="test_id", how="left")
+            merged_results = pd.merge(
+                heatmap_results, metadata, on="test_id", how="left"
+            )
 
             if graph_type == "heatmap_rel":
-                base_df = df_all[df_all["timestamp"] == base_ts][
+                baseline_results = all_results[all_results["timestamp"] == base_ts][
                     ["test_id", "score"]
                 ].rename(columns={"score": "base_score"})
-                merged = pd.merge(merged, base_df, on="test_id", how="left")
-                merged["val"] = merged.apply(
-                    lambda r: (
-                        r["score"] / r["base_score"]
-                        if pd.notna(r["base_score"]) and r["base_score"] != 0
+                merged_results = pd.merge(
+                    merged_results,
+                    baseline_results,
+                    on="test_id",
+                    how="left",
+                )
+                merged_results["val"] = merged_results.apply(
+                    lambda row: (
+                        row["score"] / row["base_score"]
+                        if pd.notna(row["base_score"]) and row["base_score"] != 0
                         else 1.0
                     ),
                     axis=1,
                 )
             else:
-                merged["val"] = merged["score"]
+                merged_results["val"] = merged_results["score"]
 
-            cnt_x = merged.groupby(param_x)["test_id"].nunique()
-            cnt_y = merged.groupby(param_y)["test_id"].nunique()
-            avg_df = merged.groupby([param_y, param_x])["val"].mean().reset_index()
-            pivot_df = avg_df.pivot(index=param_y, columns=param_x, values="val")
-            pivot_df = pivot_df.sort_index().sort_index(axis=1).astype(float)
+            x_counts = merged_results.groupby(param_x)["test_id"].nunique()
+            y_counts = merged_results.groupby(param_y)["test_id"].nunique()
+            averaged_results = (
+                merged_results.groupby([param_y, param_x])["val"].mean().reset_index()
+            )
+            pivot_table = averaged_results.pivot(
+                index=param_y, columns=param_x, values="val"
+            )
+            pivot_table = pivot_table.sort_index().sort_index(axis=1).astype(float)
 
             if direction == "minimize":
                 if graph_type == "heatmap_rel":
                     color_scale = [[0.0, "#4caf50"], [0.5, "#1e1e1e"], [1.0, "#f44336"]]
-                    zmid = 1.0
+                    color_midpoint = 1.0
                 else:
                     color_scale = [[0.0, "#4caf50"], [1.0, "#f44336"]]
-                    zmid = None
+                    color_midpoint = None
             else:
                 if graph_type == "heatmap_rel":
                     color_scale = [[0.0, "#f44336"], [0.5, "#1e1e1e"], [1.0, "#4caf50"]]
-                    zmid = 1.0
+                    color_midpoint = 1.0
                 else:
                     color_scale = [[0.0, "#f44336"], [1.0, "#4caf50"]]
-                    zmid = None
+                    color_midpoint = None
 
-            text_fmt = ".3f" if graph_type == "heatmap_rel" else ".3s"
+            text_format = ".3f" if graph_type == "heatmap_rel" else ".3s"
 
-            vmin = pivot_df.min().min()
-            vmax = pivot_df.max().max()
+            minimum_value = pivot_table.min().min()
+            maximum_value = pivot_table.max().max()
             safe_range = None
-            if pd.notna(vmin) and vmin == vmax:
-                safe_range = [vmin - 0.1, vmax + 0.1]
-                zmid = None
+            if pd.notna(minimum_value) and minimum_value == maximum_value:
+                safe_range = [minimum_value - 0.1, maximum_value + 0.1]
+                color_midpoint = None
 
-            fig = px.imshow(
-                pivot_df.values,
+            figure = px.imshow(
+                pivot_table.values,
                 labels=dict(
                     x=f"{param_x}",
                     y=f"{param_y}",
                     color="Rel Ave" if graph_type == "heatmap_rel" else "Abs Ave",
                 ),
-                x=[f"{x} (n={cnt_x.get(x, 0)})" for x in pivot_df.columns],
-                y=[f"{y} (n={cnt_y.get(y, 0)})" for y in pivot_df.index],
+                x=[
+                    f"{value} (n={x_counts.get(value, 0)})"
+                    for value in pivot_table.columns
+                ],
+                y=[
+                    f"{value} (n={y_counts.get(value, 0)})"
+                    for value in pivot_table.index
+                ],
                 aspect="auto",
                 color_continuous_scale=color_scale,
-                color_continuous_midpoint=zmid,
+                color_continuous_midpoint=color_midpoint,
                 range_color=safe_range,
                 origin="lower",
-                text_auto=text_fmt,
+                text_auto=text_format,
             )
-            fig.update_layout(
-                xaxis_title=f"Parameter: {param_x}", yaxis_title=f"Parameter: {param_y}"
+            figure.update_layout(
+                xaxis_title=f"Parameter: {param_x}",
+                yaxis_title=f"Parameter: {param_y}",
             )
         else:
-            fig = px.scatter(title="（パラメータ情報を取得できませんでした）")
-            fig.update_layout(paper_bgcolor="#1e1e1e", plot_bgcolor="#1e1e1e")
+            figure = px.scatter(title="（パラメータ情報を取得できませんでした）")
+            figure.update_layout(paper_bgcolor="#1e1e1e", plot_bgcolor="#1e1e1e")
 
     elif graph_type == "score_time":
-        df_st = df.copy()
-        df_st["time"] = pd.to_numeric(df_st["time"], errors="coerce")
-        df_st = df_st.dropna(subset=["time"])
-        label_order = add_ts_count_label(df_st, sorted_ts)
-        fig = px.scatter(
-            df_st,
+        score_time_results = selected_results.copy()
+        score_time_results["time"] = pd.to_numeric(
+            score_time_results["time"], errors="coerce"
+        )
+        score_time_results = score_time_results.dropna(subset=["time"])
+        label_order = add_ts_count_label(score_time_results, sorted_timestamps)
+        figure = px.scatter(
+            score_time_results,
             x="time",
             y="score",
             color="ts_label",
@@ -353,27 +451,35 @@ def build_graph(
             labels={"ts_label": "timestamp"},
             render_mode="webgl",
         )
-        fig.update_layout(xaxis_title="Time (s)", yaxis_title="Score")
+        figure.update_layout(xaxis_title="Time (s)", yaxis_title="Score")
 
     elif graph_type == "regression":
-        cmp = store.compare(base_ts, target_ts)
-        cmp = cmp.dropna(subset=["base", "target"])
-        if cmp.empty:
-            fig = px.scatter(title="（比較できるデータがありません）")
-            fig.update_layout(paper_bgcolor="#1e1e1e", plot_bgcolor="#1e1e1e")
+        comparison = store.compare(base_ts, target_ts)
+        comparison = comparison.dropna(subset=["base", "target"])
+        if comparison.empty:
+            figure = px.scatter(title="（比較できるデータがありません）")
+            figure.update_layout(paper_bgcolor="#1e1e1e", plot_bgcolor="#1e1e1e")
         else:
             ascending = direction == "maximize"
-            cmp = cmp.sort_values("delta", ascending=ascending)
+            comparison = comparison.sort_values("delta", ascending=ascending)
             if direction == "minimize":
-                cmp["判定"] = cmp["delta"].apply(
-                    lambda d: "改善" if d < 0 else ("悪化" if d > 0 else "同じ")
+                comparison["判定"] = comparison["delta"].apply(
+                    lambda difference: (
+                        "改善"
+                        if difference < 0
+                        else ("悪化" if difference > 0 else "同じ")
+                    )
                 )
             else:
-                cmp["判定"] = cmp["delta"].apply(
-                    lambda d: "改善" if d > 0 else ("悪化" if d < 0 else "同じ")
+                comparison["判定"] = comparison["delta"].apply(
+                    lambda difference: (
+                        "改善"
+                        if difference > 0
+                        else ("悪化" if difference < 0 else "同じ")
+                    )
                 )
-            fig = px.bar(
-                cmp,
+            figure = px.bar(
+                comparison,
                 x="name",
                 y="delta",
                 color="判定",
@@ -384,8 +490,10 @@ def build_graph(
                 },
                 hover_data=["base", "target", "rel"],
             )
-            fig.update_xaxes(categoryorder="array", categoryarray=list(cmp["name"]))
-            fig.update_layout(xaxis_title="Case", yaxis_title="Δ (Target - Base)")
+            figure.update_xaxes(
+                categoryorder="array", categoryarray=list(comparison["name"])
+            )
+            figure.update_layout(xaxis_title="Case", yaxis_title="Δ (Target - Base)")
 
     is_log = bool(log_scale and "log" in log_scale)
 
@@ -396,7 +504,7 @@ def build_graph(
         yaxis_type = "log" if is_log else "linear"
         xaxis_type = None
 
-    fig.update_layout(
+    figure.update_layout(
         template="plotly_dark",
         hovermode="x unified" if graph_type in ["abs", "rel"] else "closest",
         margin=dict(l=20, r=20, t=10, b=20),
@@ -408,21 +516,22 @@ def build_graph(
     )
 
     if xaxis_type:
-        fig.update_layout(xaxis_type=xaxis_type)
+        figure.update_layout(xaxis_type=xaxis_type)
 
     if graph_type == "heatmap_abs":
-        summary_msg = f"ヒートマップ対象: {target_ts}"
+        summary_text = f"ヒートマップ対象: {target_ts}"
     elif graph_type == "heatmap_rel":
-        summary_msg = f"ヒートマップ対象: {target_ts} (Base: {base_ts})"
+        summary_text = f"ヒートマップ対象: {target_ts} (Base: {base_ts})"
     elif graph_type == "regression":
-        st = store.paired_stats(base_ts, target_ts)
-        p_str = f"{st['p']:.3g}" if st["p"] is not None else "-"
-        summary_msg = (
+        statistics = store.paired_stats(base_ts, target_ts)
+        p_value_text = f"{statistics['p']:.3g}" if statistics["p"] is not None else "-"
+        summary_text = (
             f"回帰: Target {target_ts} vs Base {base_ts} | "
-            f"改善 {st['win']} / 悪化 {st['lose']} / 同 {st['tie']} (n={st['n']}) | "
-            f"Wilcoxon p={p_str}"
+            f"改善 {statistics['win']} / 悪化 {statistics['lose']} / "
+            f"同 {statistics['tie']} (n={statistics['n']}) | "
+            f"Wilcoxon p={p_value_text}"
         )
     else:
-        summary_msg = f"直近に選択したケース: {target_ts}"
+        summary_text = f"直近に選択したケース: {target_ts}"
 
-    return fig, summary_msg
+    return figure, summary_text

@@ -1,24 +1,33 @@
-import os
-import json
 import difflib
+import json
+import os
+from typing import Any, Optional
 
 from dash import dcc, html
+from dash.development.base_component import Component
 
 from . import config
+from .data import ResultStore
 
 
 def render_tab_content(
-    store, tab, active_cell, target_ts, file_data, base_ts, table_data
-):
+    store: ResultStore,
+    tab: str,
+    active_cell: Optional[dict[str, Any]],
+    target_ts: Optional[str],
+    file_data: list[dict[str, Any]],
+    base_ts: Optional[str],
+    table_data: list[dict[str, Any]],
+) -> Optional[Component]:
     if not target_ts:
         return html.Div("対象の実行結果が選択されていません。", style={"color": "#ccc"})
 
     if not base_ts and table_data:
-        all_timestamps = sorted(list(set([r["timestamp"] for r in table_data])))
+        all_timestamps = sorted(list({row["timestamp"] for row in table_data}))
         if all_timestamps:
             base_ts = all_timestamps[0]
 
-    # ソースコードと Diff はケース選択を必要としないので先に処理する
+    # ソースコードと差分はケース選択を必要としないため先に処理する
     if tab == "tab-src":
         return _render_src_tab(store, target_ts)
 
@@ -49,7 +58,7 @@ def render_tab_content(
         return _render_vis_tab(store, timestamp, filename)
 
 
-def _code_panel(title, content):
+def _code_panel(title: str, content: str) -> Component:
     """見出しとコピー付きの読み取り専用コードパネルを返す"""
     return html.Div(
         style={
@@ -74,32 +83,36 @@ def _code_panel(title, content):
     )
 
 
-def _render_src_tab(store, target_ts):
-    src, src_name = store.source(target_ts)
-    return _code_panel(f"ソースコード ({src_name})", src)
+def _render_src_tab(store: ResultStore, target_ts: str) -> Component:
+    source_code, source_name = store.source(target_ts)
+    return _code_panel(f"ソースコード ({source_name})", source_code)
 
 
-def _render_in_tab(store, filename):
-    in_text = store.in_file(filename)
-    if not in_text:
-        in_text = "(入力ファイルが見つかりません)"
-    return _code_panel(f"入力 ({filename})", in_text)
+def _render_in_tab(store: ResultStore, filename: str) -> Component:
+    input_text = store.in_file(filename)
+    if not input_text:
+        input_text = "(入力ファイルが見つかりません)"
+    return _code_panel(f"入力 ({filename})", input_text)
 
 
-def _render_diff_tab(store, target_ts, base_ts):
-    target_src, target_src_name = store.source(target_ts)
-    base_src, base_src_name = store.source(base_ts) if base_ts else ("", "")
+def _render_diff_tab(
+    store: ResultStore,
+    target_ts: str,
+    base_ts: Optional[str],
+) -> Component:
+    target_source, target_source_name = store.source(target_ts)
+    base_source, base_source_name = store.source(base_ts) if base_ts else ("", "")
 
     if not base_ts:
         diff_text = "(Baseとなる比較対象が見つかりません)"
-        src_label = target_src_name
+        source_label = target_source_name
     else:
         diff_lines = list(
             difflib.unified_diff(
-                base_src.splitlines(),
-                target_src.splitlines(),
-                fromfile=f"Base ({base_ts}/{base_src_name})",
-                tofile=f"Target ({target_ts}/{target_src_name})",
+                base_source.splitlines(),
+                target_source.splitlines(),
+                fromfile=f"Base ({base_ts}/{base_source_name})",
+                tofile=f"Target ({target_ts}/{target_source_name})",
                 lineterm="",
             )
         )
@@ -107,7 +120,7 @@ def _render_diff_tab(store, target_ts, base_ts):
         diff_text = "\n".join(diff_lines)
         if not diff_text.strip():
             diff_text = "差分はありません (同一コードです)"
-        src_label = target_src_name or base_src_name
+        source_label = target_source_name or base_source_name
 
     return html.Div(
         style={
@@ -118,7 +131,7 @@ def _render_diff_tab(store, target_ts, base_ts):
         },
         children=[
             html.H4(
-                f"ソースコード 差分 ({src_label}) [Base vs Target]",
+                f"ソースコード 差分 ({source_label}) [Base vs Target]",
                 style={"margin": "0", "color": "#ccc"},
             ),
             html.Div(
@@ -137,9 +150,9 @@ def _render_diff_tab(store, target_ts, base_ts):
     )
 
 
-def _colorize_diff(diff_text):
-    """unified diff の各行を追加・削除・ヘッダで色分けした span のリストにする"""
-    lines = []
+def _colorize_diff(diff_text: str) -> list[Component]:
+    """unified diff の各行を種類に応じて色分けする"""
+    styled_lines = []
     for line in diff_text.split("\n"):
         if line.startswith("+++") or line.startswith("---"):
             color = "#888"
@@ -151,12 +164,16 @@ def _colorize_diff(diff_text):
             color = "#e57373"
         else:
             color = "#e0e0e0"
-        lines.append(html.Span(line + "\n", style={"color": color}))
-    return lines
+        styled_lines.append(html.Span(line + "\n", style={"color": color}))
+    return styled_lines
 
 
-def _render_text_tab(store, timestamp, filename):
-    err_text, out_text = store.out_err(timestamp, filename)
+def _render_text_tab(
+    store: ResultStore,
+    timestamp: str,
+    filename: str,
+) -> Component:
+    error_text, output_text = store.out_err(timestamp, filename)
 
     return html.Div(
         style={
@@ -183,9 +200,12 @@ def _render_text_tab(store, timestamp, filename):
                         className="code-container",
                         style={"flex": "1"},
                         children=[
-                            dcc.Clipboard(content=err_text, className="clipboard-btn"),
+                            dcc.Clipboard(
+                                content=error_text,
+                                className="clipboard-btn",
+                            ),
                             dcc.Textarea(
-                                value=err_text,
+                                value=error_text,
                                 className="code-textarea",
                                 readOnly=True,
                             ),
@@ -210,9 +230,12 @@ def _render_text_tab(store, timestamp, filename):
                         className="code-container",
                         style={"flex": "1"},
                         children=[
-                            dcc.Clipboard(content=out_text, className="clipboard-btn"),
+                            dcc.Clipboard(
+                                content=output_text,
+                                className="clipboard-btn",
+                            ),
                             dcc.Textarea(
-                                value=out_text,
+                                value=output_text,
                                 className="code-textarea",
                                 readOnly=True,
                             ),
@@ -224,22 +247,29 @@ def _render_text_tab(store, timestamp, filename):
     )
 
 
-def _render_vis_tab(store, timestamp, filename):
-    in_text = store.in_file(filename)
-    _, out_text = store.out_err(timestamp, filename)
-    if out_text == "(outファイルなし)":
-        out_text = ""
+def _render_vis_tab(
+    store: ResultStore,
+    timestamp: str,
+    filename: str,
+) -> Component:
+    input_text = store.in_file(filename)
+    _, output_text = store.out_err(timestamp, filename)
+    if output_text == "(outファイルなし)":
+        output_text = ""
 
-    vis_html = config.vis_html_path()
-    if os.path.exists(vis_html):
-        with open(vis_html, "r", encoding="utf-8") as f:
-            html_template = f.read()
+    visualizer_path = config.vis_html_path()
+    if os.path.exists(visualizer_path):
+        with open(visualizer_path, "r", encoding="utf-8") as visualizer_file:
+            html_template = visualizer_file.read()
 
-        js_data_block = f"<script>\nconst INPUT_DATA = {json.dumps(in_text)};\nconst OUTPUT_DATA = {json.dumps(out_text)};\n</script>"
-        src_doc = html_template.replace("</body>", f"{js_data_block}\n</body>")
+        data_script = (
+            f"<script>\nconst INPUT_DATA = {json.dumps(input_text)};\n"
+            f"const OUTPUT_DATA = {json.dumps(output_text)};\n</script>"
+        )
+        document = html_template.replace("</body>", f"{data_script}\n</body>")
 
         return html.Iframe(
-            srcDoc=src_doc,
+            srcDoc=document,
             style={
                 "width": "100%",
                 "height": "100%",

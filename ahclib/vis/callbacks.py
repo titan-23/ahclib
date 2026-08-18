@@ -1,14 +1,14 @@
 import pandas as pd
 import dash
-from dash import ctx
+from dash import Dash, ctx
 from dash.dependencies import Input, Output, State
 
 from . import figures
 from . import tabs
-from .data import format_timestamp
+from .data import ResultStore, format_timestamp
 
 
-def register_callbacks(app, store):
+def register_callbacks(app: Dash, store: ResultStore) -> None:
     @app.callback(
         Output("target-ts-store", "data"),
         Output("prev-selected-rows", "data"),
@@ -17,24 +17,32 @@ def register_callbacks(app, store):
         State("target-ts-store", "data"),
         State("table-data", "data"),
     )
-    def update_target_store(selected_rows, prev_selected, current_target, table_data):
+    def update_target_store(
+        selected_rows, previous_selected, current_target, table_data
+    ):
         if selected_rows is None:
             selected_rows = []
-        if prev_selected is None:
-            prev_selected = []
+        if previous_selected is None:
+            previous_selected = []
         if not table_data:
             return None, selected_rows
 
-        added = [r for r in selected_rows if r not in prev_selected]
+        added_rows = [
+            row_index
+            for row_index in selected_rows
+            if row_index not in previous_selected
+        ]
         new_target = current_target
 
-        if added:
-            last_added = added[-1]
+        if added_rows:
+            last_added = added_rows[-1]
             if last_added < len(table_data):
                 new_target = table_data[last_added]["timestamp"]
         else:
             selected_ts_list = [
-                table_data[r]["timestamp"] for r in selected_rows if r < len(table_data)
+                table_data[row_index]["timestamp"]
+                for row_index in selected_rows
+                if row_index < len(table_data)
             ]
             if new_target not in selected_ts_list:
                 if selected_ts_list:
@@ -90,20 +98,30 @@ def register_callbacks(app, store):
         State("param-selector", "value"),
         State("param-selector-y", "value"),
     )
-    def update_param_options(n, current_x, current_y):
-        meta_df = store.meta()
-        cols = [c for c in meta_df.columns if c != "test_id"]
-        if not cols:
+    def update_param_options(_click_count, current_x, current_y):
+        metadata = store.meta()
+        parameter_columns = [
+            column for column in metadata.columns if column != "test_id"
+        ]
+        if not parameter_columns:
             return [], None, [], None
 
-        options = [{"label": c, "value": c} for c in cols]
+        options = [{"label": column, "value": column} for column in parameter_columns]
 
-        val_x = current_x if current_x in cols else cols[0]
-        val_y = (
-            current_y if current_y in cols else (cols[1] if len(cols) > 1 else cols[0])
+        selected_x = (
+            current_x if current_x in parameter_columns else parameter_columns[0]
+        )
+        selected_y = (
+            current_y
+            if current_y in parameter_columns
+            else (
+                parameter_columns[1]
+                if len(parameter_columns) > 1
+                else parameter_columns[0]
+            )
         )
 
-        return options, val_x, options, val_y
+        return options, selected_x, options, selected_y
 
     @app.callback(
         Output("base-store", "data"),
@@ -131,11 +149,11 @@ def register_callbacks(app, store):
     )
     def save_memo(current_data, previous_data):
         if current_data and previous_data:
-            for curr, prev in zip(current_data, previous_data):
-                c_memo = str(curr.get("memo", "")).strip()
-                p_memo = str(prev.get("memo", "")).strip()
-                if c_memo != p_memo:
-                    store.save_memo(curr["timestamp"], c_memo)
+            for current_row, previous_row in zip(current_data, previous_data):
+                current_memo = str(current_row.get("memo", "")).strip()
+                previous_memo = str(previous_row.get("memo", "")).strip()
+                if current_memo != previous_memo:
+                    store.save_memo(current_row["timestamp"], current_memo)
         return dash.no_update
 
     @app.callback(
@@ -148,7 +166,13 @@ def register_callbacks(app, store):
         Input("auto-refresh-interval", "n_intervals"),
         State("table-data", "data"),
     )
-    def update_table(n, base_ts, active_cell, n_intervals, current_data):
+    def update_table(
+        _reload_clicks,
+        base_ts,
+        active_cell,
+        _interval_count,
+        current_data,
+    ):
         triggered = ctx.triggered_id
 
         if triggered in ("reload-button", "auto-refresh-interval"):
@@ -178,33 +202,35 @@ def register_callbacks(app, store):
                 store.delete(ts_to_delete)
                 store.refresh()
 
-        df = store.long_frame()
-        if df.empty:
+        all_results = store.long_frame()
+        if all_results.empty:
             return [], [], reset_active
 
-        timestamps = sorted(df["timestamp"].unique())
+        timestamps = sorted(all_results["timestamp"].unique())
         if not timestamps:
             return [], [], reset_active
 
         if base_ts not in timestamps:
             base_ts = timestamps[0]
 
-        base_df = df[df["timestamp"] == base_ts][["test_id", "score"]].rename(
-            columns={"score": "base_score"}
+        baseline_results = all_results[all_results["timestamp"] == base_ts][
+            ["test_id", "score"]
+        ].rename(columns={"score": "base_score"})
+        merged_results = pd.merge(
+            all_results, baseline_results, on="test_id", how="left"
         )
-        merged = pd.merge(df, base_df, on="test_id", how="left")
 
-        merged["rel_score"] = merged.apply(
-            lambda r: (
-                r["score"] / r["base_score"]
-                if pd.notna(r["base_score"]) and r["base_score"] != 0
+        merged_results["rel_score"] = merged_results.apply(
+            lambda row: (
+                row["score"] / row["base_score"]
+                if pd.notna(row["base_score"]) and row["base_score"] != 0
                 else 1.0
             ),
             axis=1,
         )
 
         grouped = (
-            merged.groupby("timestamp")
+            merged_results.groupby("timestamp")
             .agg(
                 average_score=("score", "mean"),
                 rel_ave=("rel_score", "mean"),
@@ -213,25 +239,27 @@ def register_callbacks(app, store):
             .reset_index()
         )
 
-        if "state" in df.columns:
-            ng_series = df[df["state"] != "AC"].groupby("timestamp").size()
+        if "state" in all_results.columns:
+            failed_counts = (
+                all_results[all_results["state"] != "AC"].groupby("timestamp").size()
+            )
             grouped["ng_cnt"] = (
-                grouped["timestamp"].map(ng_series).fillna(0).astype(int)
+                grouped["timestamp"].map(failed_counts).fillna(0).astype(int)
             )
         else:
             grouped["ng_cnt"] = 0
 
         grouped["formatted"] = grouped["timestamp"].apply(format_timestamp)
         grouped["is_base_str"] = grouped["timestamp"].apply(
-            lambda ts: "★" if ts == base_ts else "・"
+            lambda timestamp: "★" if timestamp == base_ts else "・"
         )
         grouped["delete_btn"] = "🗑️"
         grouped["memo"] = grouped["timestamp"].apply(store.get_memo)
         grouped = grouped.sort_values("timestamp")
 
         records = grouped.to_dict("records")
-        for r in records:
-            r["id"] = r["timestamp"]
+        for record in records:
+            record["id"] = record["timestamp"]
 
         return records, records, reset_active
 
@@ -244,25 +272,34 @@ def register_callbacks(app, store):
         Input("timestamp-table", "selected_rows"),
         State("table-data", "data"),
     )
-    def handle_selection(n_latest, n_all, n_clear, n_reload, native_selected, data):
+    def handle_selection(
+        _latest_clicks,
+        _select_all_clicks,
+        _clear_clicks,
+        _reload_clicks,
+        native_selected,
+        table_data,
+    ):
         triggered = ctx.triggered_id
-        if not data:
+        if not table_data:
             return []
 
-        selected = native_selected if native_selected else []
-        selected = [s for s in selected if s < len(data)]
+        selected_rows = native_selected if native_selected else []
+        selected_rows = [
+            row_index for row_index in selected_rows if row_index < len(table_data)
+        ]
 
         if triggered == "add-latest":
-            latest_idx = len(data) - 1
-            if latest_idx >= 0 and latest_idx not in selected:
-                selected.append(latest_idx)
-            return sorted(selected)
+            latest_index = len(table_data) - 1
+            if latest_index >= 0 and latest_index not in selected_rows:
+                selected_rows.append(latest_index)
+            return sorted(selected_rows)
         elif triggered == "select-all":
-            return list(range(len(data)))
+            return list(range(len(table_data)))
         elif triggered == "clear-selection":
             return []
 
-        return selected
+        return selected_rows
 
     @app.callback(
         Output("current-timestamp-display", "children"),
@@ -282,58 +319,67 @@ def register_callbacks(app, store):
     def update_file_table(target_ts, base_ts, case_filter):
         if not target_ts:
             return []
-        df_all = store.long_frame()
-        if df_all.empty:
+        all_results = store.long_frame()
+        if all_results.empty:
             return []
 
-        df_all["score"] = pd.to_numeric(df_all["score"], errors="coerce")
+        all_results["score"] = pd.to_numeric(all_results["score"], errors="coerce")
 
         if store.direction == "minimize":
-            best_df = (
-                df_all.groupby("name")["score"]
+            best_results = (
+                all_results.groupby("name")["score"]
                 .min()
                 .reset_index()
                 .rename(columns={"score": "best"})
             )
         else:
-            best_df = (
-                df_all.groupby("name")["score"]
+            best_results = (
+                all_results.groupby("name")["score"]
                 .max()
                 .reset_index()
                 .rename(columns={"score": "best"})
             )
 
-        df = df_all[df_all["timestamp"] == target_ts].copy()
+        selected_results = all_results[all_results["timestamp"] == target_ts].copy()
 
         if base_ts:
-            base_df = df_all[df_all["timestamp"] == base_ts][["name", "score"]].rename(
-                columns={"score": "base_score"}
+            baseline_results = all_results[all_results["timestamp"] == base_ts][
+                ["name", "score"]
+            ].rename(columns={"score": "base_score"})
+            selected_results = pd.merge(
+                selected_results,
+                baseline_results,
+                on="name",
+                how="left",
             )
-            df = pd.merge(df, base_df, on="name", how="left")
-            df["rel"] = df.apply(
-                lambda r: (
-                    r["score"] / r["base_score"]
-                    if pd.notna(r["base_score"]) and r["base_score"] != 0
+            selected_results["rel"] = selected_results.apply(
+                lambda row: (
+                    row["score"] / row["base_score"]
+                    if pd.notna(row["base_score"]) and row["base_score"] != 0
                     else 1.0
                 ),
                 axis=1,
             )
         else:
-            df["rel"] = 1.0
+            selected_results["rel"] = 1.0
 
-        df = pd.merge(df, best_df, on="name", how="left")
-        df["time"] = pd.to_numeric(df["time"], errors="coerce")
-
-        if "state" not in df.columns:
-            df["state"] = ""
-        if case_filter and "non_ac" in case_filter:
-            df = df[df["state"] != "AC"]
-
-        records = df[["name", "state", "score", "rel", "best", "time"]].to_dict(
-            "records"
+        selected_results = pd.merge(
+            selected_results, best_results, on="name", how="left"
         )
-        for r in records:
-            r["id"] = r["name"]
+        selected_results["time"] = pd.to_numeric(
+            selected_results["time"], errors="coerce"
+        )
+
+        if "state" not in selected_results.columns:
+            selected_results["state"] = ""
+        if case_filter and "non_ac" in case_filter:
+            selected_results = selected_results[selected_results["state"] != "AC"]
+
+        records = selected_results[
+            ["name", "state", "score", "rel", "best", "time"]
+        ].to_dict("records")
+        for record in records:
+            record["id"] = record["name"]
 
         return records
 
@@ -364,7 +410,7 @@ def register_callbacks(app, store):
         if active_cell:
             filename = active_cell.get("row_id")
             if filename:
-                # ソートされても追従するよう、行番号ではなくケース名で指定する
+                # 並べ替え後も追従するよう、行番号ではなくケース名で指定する
                 styles.append(
                     {
                         "if": {"filter_query": f'{{name}} = "{filename}"'},

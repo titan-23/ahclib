@@ -1,9 +1,10 @@
 from dash import dcc, html, dash_table
+from dash.development.base_component import Component
 
 from . import config
 
 
-def _graph_type_radio():
+def _graph_type_radio() -> Component:
     options = [
         ("絶対スコア", "abs"),
         ("相対スコア", "rel"),
@@ -40,7 +41,7 @@ def _graph_type_radio():
     )
 
 
-def _build_sidebar(direction):
+def _build_sidebar(direction: str) -> Component:
     return html.Div(
         id="sidebar-container",
         className="sidebar-base sidebar-pinned",
@@ -160,7 +161,7 @@ def _build_sidebar(direction):
     )
 
 
-def _build_main():
+def _build_main() -> Component:
     return html.Div(
         className="main-content",
         children=[
@@ -411,7 +412,7 @@ def _build_main():
     )
 
 
-def build_layout(direction):
+def build_layout(direction: str) -> Component:
     return html.Div(
         className="layout-container",
         children=[

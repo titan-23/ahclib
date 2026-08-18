@@ -1,5 +1,7 @@
 .vscode/
 .claude/
+.codex/
+.agents/
 *.in
 *.out
 out.txt

@@ -1,16 +1,17 @@
+import importlib
 import os
-import sys
 import re
 import shutil
-import importlib
+import sys
 from datetime import datetime
+from typing import Any, Optional
 
 import pandas as pd
 
 from . import config
 
 
-def get_ahc_setting(key, default):
+def get_ahc_setting(key: str, default: Any) -> Any:
     """カレントの ahc_settings.py から AHCSettings の属性を読む"""
     try:
         if os.getcwd() not in sys.path:
@@ -23,19 +24,25 @@ def get_ahc_setting(key, default):
         return default
 
 
-def format_timestamp(ts):
-    for fmt in ("%Y_%m_%d_%H_%M_%S", "%Y%m%d_%H%M"):
+def format_timestamp(timestamp: str) -> str:
+    for timestamp_format in ("%Y_%m_%d_%H_%M_%S", "%Y%m%d_%H%M"):
         try:
-            return datetime.strptime(ts, fmt).strftime("%Y/%m/%d %H:%M")
+            return datetime.strptime(timestamp, timestamp_format).strftime(
+                "%Y/%m/%d %H:%M"
+            )
         except ValueError:
             continue
-    return ts
+    return timestamp
 
 
 class ResultStore:
     """実行結果の読み込み・キャッシュ・集計を集約する"""
 
-    def __init__(self, base_path=None, direction=None):
+    def __init__(
+        self,
+        base_path: Optional[str] = None,
+        direction: Optional[str] = None,
+    ) -> None:
         self.base_path = base_path or config.BASE_PATH
         self.direction = direction or get_ahc_setting("direction", "minimize")
         self._csv_cache = {}
@@ -44,8 +51,8 @@ class ResultStore:
         self._meta_in_files = []
         self._meta_settings_mtime = 0
 
-    def _scan(self):
-        """フォルダ一覧と各 result.csv の mtime の組を返す"""
+    def _scan(self) -> list[tuple[str, float]]:
+        """結果ディレクトリ名と result.csv の更新日時を返す"""
         if not os.path.exists(self.base_path):
             return []
         entries = []
@@ -55,9 +62,9 @@ class ResultStore:
                 entries.append((folder, os.path.getmtime(csv_path)))
         return entries
 
-    def long_frame(self):
-        """全実行を結合した DataFrame を返す。署名が変わらなければ再結合しない"""
-        empty_df = pd.DataFrame(
+    def long_frame(self) -> pd.DataFrame:
+        """全実行を結合した DataFrame を返し、変更がなければキャッシュを使う"""
+        empty_frame = pd.DataFrame(
             columns=[
                 "filename",
                 "score",
@@ -75,12 +82,12 @@ class ResultStore:
 
         current_folders = [folder for folder, _ in entries]
         self._csv_cache = {
-            k: v
-            for k, v in self._csv_cache.items()
-            if os.path.basename(k) in current_folders
+            folder_path: cached_data
+            for folder_path, cached_data in self._csv_cache.items()
+            if os.path.basename(folder_path) in current_folders
         }
 
-        data = []
+        frames = []
         for folder, mtime in entries:
             folder_path = os.path.join(self.base_path, folder)
             csv_path = os.path.join(folder_path, config.FILE_NAME)
@@ -89,36 +96,40 @@ class ResultStore:
                     folder_path in self._csv_cache
                     and self._csv_cache[folder_path][0] == mtime
                 ):
-                    df = self._csv_cache[folder_path][1]
+                    frame = self._csv_cache[folder_path][1]
                 else:
-                    df = pd.read_csv(csv_path)
-                    df["timestamp"] = folder
-                    df["name"] = df["filename"].str.extract(r"(\d{4}\.txt)")
-                    df["test_id"] = df["filename"].str.extract(r"(\d{4}\.txt)")
-                    self._csv_cache[folder_path] = (mtime, df)
-                data.append(df)
+                    frame = pd.read_csv(csv_path)
+                    frame["timestamp"] = folder
+                    frame["name"] = frame["filename"].str.extract(r"(\d{4}\.txt)")
+                    frame["test_id"] = frame["filename"].str.extract(r"(\d{4}\.txt)")
+                    self._csv_cache[folder_path] = (mtime, frame)
+                frames.append(frame)
             except Exception:
                 pass
 
-        frame = pd.concat(data, ignore_index=True) if data else empty_df
+        frame = pd.concat(frames, ignore_index=True) if frames else empty_frame
         self._frame_cache = (signature, frame)
         return frame
 
-    def refresh(self):
-        """次回 long_frame() で再走査されるようキャッシュを無効化する"""
+    def refresh(self) -> None:
+        """次回の long_frame() で再走査するようキャッシュを無効化する"""
         self._frame_cache = None
 
-    def compare(self, base_ts, target_ts):
-        """Base と Target のケースごとスコアを突き合わせた DataFrame を返す"""
-        cols = ["test_id", "name", "base", "target", "delta", "rel"]
-        df = self.long_frame()
-        if df.empty or base_ts is None or target_ts is None:
-            return pd.DataFrame(columns=cols)
+    def compare(
+        self,
+        base_ts: Optional[str],
+        target_ts: Optional[str],
+    ) -> pd.DataFrame:
+        """基準と比較対象のスコアをケースごとに対応付ける"""
+        columns = ["test_id", "name", "base", "target", "delta", "rel"]
+        frame = self.long_frame()
+        if frame.empty or base_ts is None or target_ts is None:
+            return pd.DataFrame(columns=columns)
 
-        base = df[df["timestamp"] == base_ts][["test_id", "name", "score"]].rename(
-            columns={"score": "base"}
-        )
-        target = df[df["timestamp"] == target_ts][["test_id", "score"]].rename(
+        base = frame[frame["timestamp"] == base_ts][
+            ["test_id", "name", "score"]
+        ].rename(columns={"score": "base"})
+        target = frame[frame["timestamp"] == target_ts][["test_id", "score"]].rename(
             columns={"score": "target"}
         )
         merged = pd.merge(base, target, on="test_id", how="inner")
@@ -126,19 +137,23 @@ class ResultStore:
         merged["target"] = pd.to_numeric(merged["target"], errors="coerce")
         merged["delta"] = merged["target"] - merged["base"]
         merged["rel"] = merged["target"] / merged["base"].replace(0, pd.NA)
-        return merged[cols]
+        return merged[columns]
 
-    def paired_stats(self, base_ts, target_ts):
-        """Base と Target の勝敗件数と Wilcoxon 検定の p 値を返す"""
+    def paired_stats(
+        self,
+        base_ts: Optional[str],
+        target_ts: Optional[str],
+    ) -> dict[str, Any]:
+        """基準と比較対象の勝敗件数と Wilcoxon 検定の p 値を返す"""
         from scipy.stats import wilcoxon
 
         result = {"n": 0, "win": 0, "lose": 0, "tie": 0, "p": None}
-        cmp = self.compare(base_ts, target_ts)
-        cmp = cmp.dropna(subset=["base", "target"])
-        if cmp.empty:
+        comparison = self.compare(base_ts, target_ts)
+        comparison = comparison.dropna(subset=["base", "target"])
+        if comparison.empty:
             return result
 
-        delta = cmp["delta"]
+        delta = comparison["delta"]
         if self.direction == "minimize":
             win = int((delta < 0).sum())
             lose = int((delta > 0).sum())
@@ -147,17 +162,17 @@ class ResultStore:
             lose = int((delta < 0).sum())
         tie = int((delta == 0).sum())
 
-        result.update(n=len(cmp), win=win, lose=lose, tie=tie)
+        result.update(n=len(comparison), win=win, lose=lose, tie=tie)
 
         if (delta != 0).any():
             try:
-                _, p = wilcoxon(cmp["target"], cmp["base"])
-                result["p"] = float(p)
+                _, p_value = wilcoxon(comparison["target"], comparison["base"])
+                result["p"] = float(p_value)
             except Exception:
                 result["p"] = None
         return result
 
-    def out_err(self, timestamp, filename):
+    def out_err(self, timestamp: str, filename: str) -> tuple[str, str]:
         err_path = os.path.join(self.base_path, timestamp, "err", filename)
         out_path = os.path.join(self.base_path, timestamp, "out", filename)
 
@@ -165,36 +180,40 @@ class ResultStore:
         out_text = "(outファイルなし)"
 
         if os.path.exists(err_path):
-            with open(err_path, "r", encoding="utf-8", errors="ignore") as f:
-                err_text = f.read()
+            with open(err_path, "r", encoding="utf-8", errors="ignore") as error_file:
+                err_text = error_file.read()
         if os.path.exists(out_path):
-            with open(out_path, "r", encoding="utf-8", errors="ignore") as f:
-                out_text = f.read()
+            with open(out_path, "r", encoding="utf-8", errors="ignore") as output_file:
+                out_text = output_file.read()
 
         return err_text, out_text
 
-    def source(self, timestamp):
-        """保存された ahc_settings.py の filename か、無ければソースらしき1ファイルを読む"""
+    def source(self, timestamp: str) -> tuple[str, str]:
+        """保存された ahc_settings.py の filename か、無ければソースらしき 1 ファイルを読む"""
         dir_path = os.path.join(self.base_path, timestamp)
         settings_path = os.path.join(dir_path, "ahc_settings.py")
         src_filename = None
 
         if os.path.exists(settings_path):
             try:
-                with open(settings_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                    m = re.search(r'filename\s*=\s*["\'](.*?)["\']', content)
-                    if m:
-                        src_filename = os.path.basename(m.group(1))
+                with open(settings_path, "r", encoding="utf-8") as settings_file:
+                    content = settings_file.read()
+                    filename_match = re.search(
+                        r'filename\s*=\s*["\'](.*?)["\']', content
+                    )
+                    if filename_match:
+                        src_filename = os.path.basename(filename_match.group(1))
             except Exception:
                 pass
 
         if not src_filename and os.path.exists(dir_path):
-            for f in os.listdir(dir_path):
+            for filename in os.listdir(dir_path):
                 if (
-                    f.endswith(".cpp") or f.endswith(".py") or f.endswith(".rs")
-                ) and f not in ["ahc_settings.py", "result.csv"]:
-                    src_filename = f
+                    filename.endswith(".cpp")
+                    or filename.endswith(".py")
+                    or filename.endswith(".rs")
+                ) and filename not in ["ahc_settings.py", "result.csv"]:
+                    src_filename = filename
                     break
 
         if not src_filename:
@@ -202,50 +221,52 @@ class ResultStore:
 
         src_path = os.path.join(dir_path, src_filename)
         if os.path.exists(src_path):
-            with open(src_path, "r", encoding="utf-8", errors="ignore") as f:
-                return f.read(), src_filename
+            with open(src_path, "r", encoding="utf-8", errors="ignore") as source_file:
+                return source_file.read(), src_filename
 
         fallback_path = os.path.join(dir_path, ".", src_filename)
         if os.path.exists(fallback_path):
-            with open(fallback_path, "r", encoding="utf-8", errors="ignore") as f:
-                return f.read(), src_filename
+            with open(
+                fallback_path, "r", encoding="utf-8", errors="ignore"
+            ) as source_file:
+                return source_file.read(), src_filename
 
         return "(ソースコードが保存されていません)", src_filename
 
-    def in_file(self, filename):
+    def in_file(self, filename: str) -> str:
         in_path = os.path.join(config.in_dir(), filename)
         if os.path.exists(in_path):
             try:
-                with open(in_path, "r", encoding="utf-8") as f:
-                    return f.read()
+                with open(in_path, "r", encoding="utf-8") as input_file:
+                    return input_file.read()
             except Exception:
                 return ""
         return ""
 
-    def get_memo(self, timestamp):
+    def get_memo(self, timestamp: str) -> str:
         memo_path = os.path.join(self.base_path, timestamp, "memo.txt")
         if os.path.exists(memo_path):
             try:
-                with open(memo_path, "r", encoding="utf-8") as f:
-                    return f.read().strip()
+                with open(memo_path, "r", encoding="utf-8") as memo_file:
+                    return memo_file.read().strip()
             except Exception:
                 pass
         return ""
 
-    def save_memo(self, timestamp, text):
+    def save_memo(self, timestamp: str, text: str) -> None:
         memo_path = os.path.join(self.base_path, timestamp, "memo.txt")
         try:
-            with open(memo_path, "w", encoding="utf-8") as f:
-                f.write(text)
+            with open(memo_path, "w", encoding="utf-8") as memo_file:
+                memo_file.write(text)
         except Exception:
             pass
 
-    def delete(self, timestamp):
+    def delete(self, timestamp: str) -> None:
         dir_path = os.path.join(self.base_path, timestamp)
         if os.path.exists(dir_path):
             shutil.rmtree(dir_path)
 
-    def meta(self):
+    def meta(self) -> pd.DataFrame:
         """./in/ 以下を parse_input_params で解析したパラメータ表を返す"""
         in_path = config.in_dir()
         if not os.path.exists(in_path):
@@ -264,8 +285,8 @@ class ResultStore:
         ):
             return self._meta_cache.copy()
 
-        meta = []
-        custom_parser = None
+        metadata = []
+        input_parser = None
         try:
             if os.getcwd() not in sys.path:
                 sys.path.append(os.getcwd())
@@ -273,31 +294,37 @@ class ResultStore:
 
             importlib.reload(ahc_settings)
             if hasattr(ahc_settings.AHCSettings, "parse_input_params"):
-                custom_parser = ahc_settings.AHCSettings.parse_input_params
+                input_parser = ahc_settings.AHCSettings.parse_input_params
         except Exception:
             pass
 
-        for fname in current_files:
-            path = os.path.join(in_path, fname)
-            if custom_parser:
+        for filename in current_files:
+            path = os.path.join(in_path, filename)
+            if input_parser:
                 try:
-                    params = custom_parser(path)
-                    params["test_id"] = fname
-                    meta.append(params)
+                    parameters = input_parser(path)
+                    parameters["test_id"] = filename
+                    metadata.append(parameters)
                     continue
                 except Exception:
                     pass
             try:
-                with open(path, "r", encoding="utf-8") as f:
-                    line = f.readline().strip()
-                    nums = [int(x) for x in line.split() if x.lstrip("-").isdigit()]
-                    param = float(nums[0]) if nums else float(os.path.getsize(path))
-                meta.append({"test_id": fname, "Param": param})
+                with open(path, "r", encoding="utf-8") as input_file:
+                    line = input_file.readline().strip()
+                    numbers = [
+                        int(value)
+                        for value in line.split()
+                        if value.lstrip("-").isdigit()
+                    ]
+                    parameter_value = (
+                        float(numbers[0]) if numbers else float(os.path.getsize(path))
+                    )
+                metadata.append({"test_id": filename, "Param": parameter_value})
             except Exception:
-                meta.append({"test_id": fname, "Param": 0.0})
+                metadata.append({"test_id": filename, "Param": 0.0})
 
-        if meta:
-            self._meta_cache = pd.DataFrame(meta)
+        if metadata:
+            self._meta_cache = pd.DataFrame(metadata)
         else:
             self._meta_cache = pd.DataFrame(columns=["test_id", "Param"])
 

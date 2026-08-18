@@ -5,7 +5,7 @@ from copy import copy
 
 
 class ElapsedFormatter(logging.Formatter):
-    """Log formatter that shows elapsed time as ``MM:SS``."""
+    """起動後の経過時間を ``MM:SS`` 形式で表示する"""
 
     def __init__(self) -> None:
         super().__init__("%(elapsed)s [%(levelname)s] : %(message)s")
@@ -21,7 +21,7 @@ class ElapsedFormatter(logging.Formatter):
 
 
 def configure_elapsed_logging() -> None:
-    """Configure the root logger to show time elapsed since this call."""
+    """この関数を呼んでからの経過時間をログに表示する"""
 
     handler = logging.StreamHandler()
     handler.setFormatter(ElapsedFormatter())

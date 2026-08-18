@@ -8,8 +8,8 @@ from .layout import build_layout
 from .callbacks import register_callbacks
 
 
-def create_app():
-    """vis ダッシュボードの Dash アプリを構築して返す"""
+def create_app() -> Dash:
+    """テスト結果を表示する Dash アプリを構築する"""
     direction = get_ahc_setting("direction", "minimize")
     store = ResultStore(direction=direction)
 

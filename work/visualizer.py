@@ -1,55 +1,55 @@
-from dash import html
 from functools import cache
 
-# beam_config.py からテーマカラーをインポートできる場合は以下を使用します
+from dash import html
+from dash.development.base_component import Component
+
+# beam_config.py を利用する場合は次の import を有効にする
 # from beam_config import DARK_THEME
-# できない場合は直接色を指定します
+# 単独で使う場合はここで色を指定する
 DARK_THEME = {"accent": "#1976d2"}
 
 
 @cache
-def generate_board_visual(action_seq: str):
-    """
-    Action列を受け取り、盤面のDashコンポーネントを生成して返します。
-    """
-    # 実際の初期盤面に書き換えてください
+def generate_board_visual(action_seq: str) -> Component:
+    """操作列を適用した盤面を Dash コンポーネントとして返す"""
+    # 問題に合わせて初期盤面を書き換える
     initial_board = [[8, 1, 13, 0], [3, 9, 10, 5], [7, 14, 6, 2], [11, 12, 15, 4]]
 
-    N = len(initial_board)
+    board_size = len(initial_board)
 
-    # 盤面をディープコピー
+    # 行ごとに複製し、元の盤面を変更しないようにする
     board = [row[:] for row in initial_board]
 
-    # 空きマス(0)の初期位置を特定
-    y, x = -1, -1
-    for i in range(N):
-        for j in range(N):
+    empty_row, empty_column = -1, -1
+    for i in range(board_size):
+        for j in range(board_size):
             if board[i][j] == 0:
-                y, x = i, j
+                empty_row, empty_column = i, j
                 break
-        if y != -1:
+        if empty_row != -1:
             break
 
-    # Action列のシミュレーション
-    for act in action_seq:
-        ny, nx = y, x
-        if act == "D":
-            ny += 1
-        elif act == "U":
-            ny -= 1
-        elif act == "R":
-            nx += 1
-        elif act == "L":
-            nx -= 1
+    for action in action_seq:
+        next_row, next_column = empty_row, empty_column
+        if action == "D":
+            next_row += 1
+        elif action == "U":
+            next_row -= 1
+        elif action == "R":
+            next_column += 1
+        elif action == "L":
+            next_column -= 1
 
-        if 0 <= ny < N and 0 <= nx < N:
-            board[y][x], board[ny][nx] = board[ny][nx], board[y][x]
-            y, x = ny, nx
+        if 0 <= next_row < board_size and 0 <= next_column < board_size:
+            board[empty_row][empty_column], board[next_row][next_column] = (
+                board[next_row][next_column],
+                board[empty_row][empty_column],
+            )
+            empty_row, empty_column = next_row, next_column
 
-    # 描画用コンポーネントの生成
     cells = []
     for row in board:
-        for val in row:
+        for value in row:
             cell_style = {
                 "width": "40px",
                 "height": "40px",
@@ -59,17 +59,17 @@ def generate_board_visual(action_seq: str):
                 "fontWeight": "bold",
                 "fontSize": "16px",
                 "color": "#ffffff",
-                "backgroundColor": DARK_THEME["accent"] if val != 0 else "#1e1e1e",
+                "backgroundColor": (DARK_THEME["accent"] if value != 0 else "#1e1e1e"),
                 "border": "1px solid #444",
                 "boxSizing": "border-box",
             }
-            cells.append(html.Div(str(val) if val != 0 else "", style=cell_style))
+            cells.append(html.Div(str(value) if value != 0 else "", style=cell_style))
 
     state_visual = html.Div(
         cells,
         style={
             "display": "grid",
-            "gridTemplateColumns": f"repeat({N}, 40px)",
+            "gridTemplateColumns": f"repeat({board_size}, 40px)",
             "gridGap": "2px",
             "backgroundColor": "#333",
             "padding": "4px",

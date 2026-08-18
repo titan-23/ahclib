@@ -4,7 +4,7 @@ BASE_PATH = "ahclib_results/all_tests"
 FILE_NAME = "result.csv"
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-# assets は ahclib/assets/ を beam と共有する
+# CSS はビームサーチ可視化と同じディレクトリから読み込む
 ASSETS_PATH = os.path.join(CURRENT_DIR, "..", "assets")
 
 
@@ -63,8 +63,8 @@ TIMESTAMP_TABLE_COLUMNS = [
 ]
 
 
-def timestamp_style_data_conditional(direction: str) -> list:
-    """direction に応じて相対スコアの改善・悪化の色を割り当てる"""
+def timestamp_style_data_conditional(direction: str) -> list[dict]:
+    """最適化方向に応じて相対スコア欄の色を割り当てる"""
     return [
         {
             "if": {"state": "selected"},

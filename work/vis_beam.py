@@ -1,19 +1,21 @@
 import json
 import os
+import time
+
 import dash
-from dash import html, dcc, Input, Output, State, callback_context, ALL
 import dash_cytoscape as cyto
 import plotly.graph_objects as go
+from dash import ALL, Input, Output, State, callback_context, dcc, html
+
 from beam_config import (
-    DARK_THEME,
     BASE_STYLESHEET,
-    tab_style,
-    tab_selected_style,
+    DARK_THEME,
     generate_assets,
+    tab_selected_style,
+    tab_style,
 )
-from beam_data import load_and_process_data, compute_compact_layout
+from beam_data import compute_compact_layout, load_and_process_data
 from visualizer import generate_board_visual
-import time
 
 cyto.load_extra_layouts()
 generate_assets()
@@ -386,7 +388,7 @@ app.layout = html.Div(
                                                         ),
                                                         html.Div(
                                                             id="node-detail-output",
-                                                            style={"marginTop": "15px"}
+                                                            style={"marginTop": "15px"},
                                                         ),
                                                         html.Label(
                                                             "Action Path:",
@@ -499,12 +501,12 @@ app.layout = html.Div(
     Input("reload-button", "n_clicks"),
     Input("keyboard-manager", "children"),
 )
-def load_data(n_clicks, _):
+def load_data(_n_clicks, _keyboard_data):
     global _DATA_CACHE
-    processed, max_t, marks = load_and_process_data("history.json")
+    processed, max_turn, _marks = load_and_process_data("history.json")
     _DATA_CACHE["processed"] = processed
     _DATA_CACHE["compact_layout_cache"] = {}
-    return {"ts": time.time()}, max_t, None
+    return {"ts": time.time()}, max_turn, None
 
 
 @app.callback(
@@ -517,14 +519,14 @@ def load_data(n_clicks, _):
     State("turn-range-slider", "max"),
     prevent_initial_call=True,
 )
-def handle_play(n_clicks, n_intervals, current_range, max_t):
+def handle_play(n_clicks, _n_intervals, current_range, max_turn):
     trigger = callback_context.triggered[0]["prop_id"]
     if "play-button" in trigger:
         is_disabled = n_clicks % 2 == 0
         return current_range, "再生" if is_disabled else "停止", is_disabled
     if "auto-play-interval" in trigger:
         new_max = current_range[1] + 1
-        if new_max > max_t:
+        if new_max > max_turn:
             return [current_range[0], current_range[1]], "再生", True
         return [current_range[0], new_max], "停止", False
     return current_range, "再生", True
@@ -546,35 +548,35 @@ def handle_play(n_clicks, n_intervals, current_range, max_t):
     State("cytoscape-tree", "elements"),
 )
 def update_elements(
-    store_signal,
+    _store_signal,
     turn_range,
     visibility,
     collapsed_ids,
     bookmarked_ids,
-    n_search,
+    _n_search,
     left_tab,
     tree_direction,
-    n_fit,
+    _n_fit,
     search_query,
     current_elements,
 ):
     if left_tab != "tab-tree":
         return dash.no_update, dash.no_update
 
-    trigger = (
+    trigger_id = (
         callback_context.triggered[0]["prop_id"] if callback_context.triggered else ""
     )
-    do_fit = trigger in ["fit-button.n_clicks", "full-data-store.data", ""]
+    should_fit = trigger_id in ["fit-button.n_clicks", "full-data-store.data", ""]
 
     layout_config = {
         "name": "preset",
         "animate": False,
-        "fit": do_fit,
+        "fit": should_fit,
         "padding": 30,
         "refresh": time.time(),
     }
 
-    if trigger == "fit-button.n_clicks" and current_elements:
+    if trigger_id == "fit-button.n_clicks" and current_elements:
         return current_elements, layout_config
 
     processed = _DATA_CACHE.get("processed", {})
@@ -582,68 +584,71 @@ def update_elements(
     if not nodes:
         return [], dash.no_update
 
-    nodes_dict = processed.get("nodes_dict", {})
-    children_dict = processed.get("children_dict", {})
-    snapshots_dict = processed.get("snapshots_dict", {})
+    nodes_by_id = processed.get("nodes_dict", {})
+    children_by_parent = processed.get("children_dict", {})
+    snapshots_by_turn = processed.get("snapshots_dict", {})
     turn_stats = processed.get("turn_stats", {})
     base_positions = processed.get("base_positions", {})
     inf_value = processed.get("current_data", {}).get("INF", 1e18)
 
-    min_t, max_t = turn_range
+    min_turn, max_turn = turn_range
     active_path = set()
 
-    valid_max_t = max_t
-    while valid_max_t >= min_t:
-        active_nodes = snapshots_dict.get(valid_max_t, {}).get("active", [])
+    active_turn = max_turn
+    while active_turn >= min_turn:
+        active_nodes = snapshots_by_turn.get(active_turn, {}).get("active", [])
         if active_nodes:
-            terminals = set(str(x) for x in active_nodes)
+            terminal_ids = set(str(node_id) for node_id in active_nodes)
             break
-        valid_max_t -= 1
+        active_turn -= 1
     else:
-        terminals = set()
+        terminal_ids = set()
 
-    curr = list(terminals)
-    while curr:
+    current_ids = list(terminal_ids)
+    while current_ids:
         next_nodes = []
-        for nid in curr:
-            if nid in nodes_dict:
-                active_path.add(nid)
-                pid = str(nodes_dict[nid]["parent_id"])
-                if pid != "-1" and pid not in active_path:
-                    next_nodes.append(pid)
-        curr = next_nodes
+        for node_id in current_ids:
+            if node_id in nodes_by_id:
+                active_path.add(node_id)
+                parent_id = str(nodes_by_id[node_id]["parent_id"])
+                if parent_id != "-1" and parent_id not in active_path:
+                    next_nodes.append(parent_id)
+        current_ids = next_nodes
     active_path.add("-1")
 
     compact_mode = "compact" in visibility
-    positions_map = base_positions
+    positions = base_positions
     if compact_mode and active_path:
         cache = _DATA_CACHE.setdefault("compact_layout_cache", {})
-        cache_key = valid_max_t
+        cache_key = active_turn
         compact_positions = cache.get(cache_key)
         if compact_positions is None:
-            raw_pos = compute_compact_layout(
-                active_path, children_dict, nodes_dict, root_id="-1"
+            raw_positions = compute_compact_layout(
+                active_path, children_by_parent, nodes_by_id, root_id="-1"
             )
             compact_positions = {}
-            for nid, x in raw_pos.items():
-                if nid == "-1":
+            for node_id, x in raw_positions.items():
+                if node_id == "-1":
                     depth = 0
-                elif nid in nodes_dict:
-                    depth = nodes_dict[nid]["turn"]
+                elif node_id in nodes_by_id:
+                    depth = nodes_by_id[node_id]["turn"]
                 else:
                     depth = 0
-                compact_positions[nid] = {"depth": depth, "breadth_center": x}
+                compact_positions[node_id] = {
+                    "depth": depth,
+                    "breadth_center": x,
+                }
             cache[cache_key] = compact_positions
-        positions_map = compact_positions
+        positions = compact_positions
 
     collapsed_set = set(collapsed_ids)
     is_ancestor_collapsed = {"-1": False}
-    for n in sorted(nodes, key=lambda x: x.get("turn", 0)):
-        nid = str(n["node_id"])
-        pid = str(n["parent_id"])
-        is_ancestor_collapsed[nid] = (
-            pid in collapsed_set
-        ) or is_ancestor_collapsed.get(pid, False)
+    for node in sorted(nodes, key=lambda item: item.get("turn", 0)):
+        node_id = str(node["node_id"])
+        parent_id = str(node["parent_id"])
+        is_ancestor_collapsed[node_id] = (
+            parent_id in collapsed_set
+        ) or is_ancestor_collapsed.get(parent_id, False)
 
     show_pruned = "show_pruned" in visibility and not compact_mode
     use_heatmap = "heatmap" in visibility
@@ -654,8 +659,12 @@ def update_elements(
         stats = turn_stats.get(turn)
         if not stats:
             return "rgb(128, 128, 128)"
-        t_min, t_max = stats["min"], stats["max"]
-        ratio = 0.5 if t_max == t_min else (score - t_min) / (t_max - t_min)
+        min_score, max_score = stats["min"], stats["max"]
+        ratio = (
+            0.5
+            if max_score == min_score
+            else (score - min_score) / (max_score - min_score)
+        )
         r, g, b = int(25 + ratio * 186), int(118 - ratio * 71), int(210 - ratio * 163)
         return f"rgb({r}, {g}, {b})"
 
@@ -666,16 +675,16 @@ def update_elements(
         depth_gap = 300
         breadth_gap = 60
 
-    pos_start = positions_map.get("-1", {"depth": 0, "breadth_center": 0.0})
+    start_position = positions.get("-1", {"depth": 0, "breadth_center": 0.0})
     start_x = (
-        pos_start["breadth_center"] * breadth_gap
+        start_position["breadth_center"] * breadth_gap
         if tree_direction == "TB"
-        else pos_start["depth"] * depth_gap
+        else start_position["depth"] * depth_gap
     )
     start_y = (
-        pos_start["depth"] * depth_gap
+        start_position["depth"] * depth_gap
         if tree_direction == "TB"
-        else pos_start["breadth_center"] * breadth_gap
+        else start_position["breadth_center"] * breadth_gap
     )
 
     elements = [
@@ -687,97 +696,108 @@ def update_elements(
     ]
 
     visible_ids = set()
-    for n in nodes:
-        nid = str(n["node_id"])
-        if is_ancestor_collapsed.get(nid, False):
+    for node in nodes:
+        node_id = str(node["node_id"])
+        if is_ancestor_collapsed.get(node_id, False):
             continue
-        if min_t <= n["turn"] <= max_t:
-            if not show_pruned and nid not in active_path:
+        if min_turn <= node["turn"] <= max_turn:
+            if not show_pruned and node_id not in active_path:
                 continue
-            visible_ids.add(nid)
-            curr_pid = str(n["parent_id"])
-            while curr_pid != "-1" and curr_pid not in visible_ids:
-                if curr_pid in nodes_dict and nodes_dict[curr_pid]["turn"] < min_t:
-                    visible_ids.add(curr_pid)
-                    curr_pid = str(nodes_dict[curr_pid]["parent_id"])
+            visible_ids.add(node_id)
+            parent_id = str(node["parent_id"])
+            while parent_id != "-1" and parent_id not in visible_ids:
+                if (
+                    parent_id in nodes_by_id
+                    and nodes_by_id[parent_id]["turn"] < min_turn
+                ):
+                    visible_ids.add(parent_id)
+                    parent_id = str(nodes_by_id[parent_id]["parent_id"])
                 else:
                     break
 
-    visible_nodes = [nodes_dict[nid] for nid in visible_ids if nid in nodes_dict]
-    visible_nodes.sort(key=lambda x: (x["turn"], x["parent_id"], x["score"]))
+    visible_nodes = [
+        nodes_by_id[node_id] for node_id in visible_ids if node_id in nodes_by_id
+    ]
+    visible_nodes.sort(
+        key=lambda node: (node["turn"], node["parent_id"], node["score"])
+    )
 
     valid_ids = {"-1"}
-    for n in visible_nodes:
-        nid = str(n["node_id"])
-        valid_ids.add(nid)
+    for node in visible_nodes:
+        node_id = str(node["node_id"])
+        valid_ids.add(node_id)
 
-        if n.get("is_answer", False):
-            cls = "status-answer"
-        elif n["status"] == 2:
-            cls = "status-invalid"
-        elif nid in active_path:
-            cls = "status-active"
+        if node.get("is_answer", False):
+            classes = "status-answer"
+        elif node["status"] == 2:
+            classes = "status-invalid"
+        elif node_id in active_path:
+            classes = "status-active"
         else:
-            cls = "status-pruned"
+            classes = "status-pruned"
 
-        if nid in collapsed_ids:
-            cls += " folded"
-        if nid in bookmarked_ids:
-            cls += " bookmarked"
+        if node_id in collapsed_ids:
+            classes += " folded"
+        if node_id in bookmarked_ids:
+            classes += " bookmarked"
 
         if search_query and (
-            search_query in str(n["score"])
-            or search_query in n.get("action", "")
-            or search_query in str(n.get("hash", ""))
+            search_query in str(node["score"])
+            or search_query in node.get("action", "")
+            or search_query in str(node.get("hash", ""))
         ):
-            cls += " searched"
+            classes += " searched"
 
-        if n["turn"] < min_t:
-            cls += " out-of-range"
+        if node["turn"] < min_turn:
+            classes += " out-of-range"
 
         element = {
-            "data": {"id": nid, "label": f"T:{n['turn']}\nS:{n['score']}"},
-            "classes": cls,
+            "data": {
+                "id": node_id,
+                "label": f"T:{node['turn']}\nS:{node['score']}",
+            },
+            "classes": classes,
         }
 
-        pos = positions_map.get(nid, {"depth": 0, "breadth_center": 0.0})
+        position = positions.get(node_id, {"depth": 0, "breadth_center": 0.0})
         if tree_direction == "TB":
             element["position"] = {
-                "x": pos["breadth_center"] * breadth_gap,
-                "y": pos["depth"] * depth_gap,
+                "x": position["breadth_center"] * breadth_gap,
+                "y": position["depth"] * depth_gap,
             }
         else:
             element["position"] = {
-                "x": pos["depth"] * depth_gap,
-                "y": pos["breadth_center"] * breadth_gap,
+                "x": position["depth"] * depth_gap,
+                "y": position["breadth_center"] * breadth_gap,
             }
 
         if use_heatmap:
-            element["data"]["bg_color"] = get_heatmap_color(n["score"], n["turn"])
+            element["data"]["bg_color"] = get_heatmap_color(node["score"], node["turn"])
             element["classes"] += " heatmap-node"
 
         elements.append(element)
 
-    for n in visible_nodes:
-        nid, pid = str(n["node_id"]), str(n["parent_id"])
-        if pid in valid_ids:
+    for node in visible_nodes:
+        node_id = str(node["node_id"])
+        parent_id = str(node["parent_id"])
+        if parent_id in valid_ids:
             elements.append(
                 {
                     "data": {
-                        "id": f"e{pid}_{nid}",
-                        "source": pid,
-                        "target": nid,
-                        "action": n.get("action", ""),
+                        "id": f"e{parent_id}_{node_id}",
+                        "source": parent_id,
+                        "target": node_id,
+                        "action": node.get("action", ""),
                     }
                 }
             )
-        elif nid != "-1":
+        elif node_id != "-1":
             elements.append(
                 {
                     "data": {
-                        "id": f"e_start_{nid}",
+                        "id": f"e_start_{node_id}",
                         "source": "-1",
-                        "target": nid,
+                        "target": node_id,
                         "action": "(省略)",
                     },
                     "classes": "dummy-edge",
@@ -787,7 +807,7 @@ def update_elements(
     layout_config = {
         "name": "preset",
         "animate": False,
-        "fit": do_fit,
+        "fit": should_fit,
         "padding": 30,
         "refresh": time.time(),
     }
@@ -798,26 +818,26 @@ def update_elements(
 @app.callback(
     Output("turn-stats-container", "children"), Input("full-data-store", "data")
 )
-def update_turn_stats(store_signal):
+def update_turn_stats(_store_signal):
     processed = _DATA_CACHE.get("processed")
     if not processed:
         return html.Div("データがありません", style={"padding": "20px"})
 
     turn_stats = processed.get("turn_stats", {})
 
-    turns_int = sorted([int(t) for t in turn_stats.keys()])
+    turns = sorted(int(turn) for turn in turn_stats)
 
-    if not turns_int:
+    if not turns:
         return html.Div("統計データがありません", style={"padding": "20px"})
 
-    def get_stats(t):
-        return turn_stats.get(t) or turn_stats.get(str(t), {})
+    def get_stats(turn):
+        return turn_stats.get(turn) or turn_stats.get(str(turn), {})
 
     x_box, y_box = [], []
-    for t in turns_int:
-        for s in get_stats(t).get("scores", []):
-            x_box.append(t)
-            y_box.append(s)
+    for turn in turns:
+        for score in get_stats(turn).get("scores", []):
+            x_box.append(turn)
+            y_box.append(score)
 
     fig_score = go.Figure(
         go.Box(x=x_box, y=y_box, name="Score", marker_color=DARK_THEME["accent"])
@@ -830,9 +850,9 @@ def update_turn_stats(store_signal):
         plot_bgcolor=DARK_THEME["background"],
     )
 
-    y_div = [get_stats(t).get("unique_parents", 0) for t in turns_int]
+    parent_counts = [get_stats(turn).get("unique_parents", 0) for turn in turns]
     fig_div = go.Figure(
-        go.Bar(x=turns_int, y=y_div, marker_color=DARK_THEME["bookmark"])
+        go.Bar(x=turns, y=parent_counts, marker_color=DARK_THEME["bookmark"])
     )
     fig_div.update_layout(
         title="生存ノードの親の数",
@@ -842,20 +862,34 @@ def update_turn_stats(store_signal):
         plot_bgcolor=DARK_THEME["background"],
     )
 
-    y_v, y_p, y_i = [], [], []
-    for t in turns_int:
-        s = get_stats(t)
-        y_v.append(
-            max(0, s.get("generated", 0) - s.get("pruned", 0) - s.get("invalid", 0))
+    valid_counts, pruned_counts, invalid_counts = [], [], []
+    for turn in turns:
+        stats = get_stats(turn)
+        valid_counts.append(
+            max(
+                0,
+                stats.get("generated", 0)
+                - stats.get("pruned", 0)
+                - stats.get("invalid", 0),
+            )
         )
-        y_p.append(s.get("pruned", 0))
-        y_i.append(s.get("invalid", 0))
+        pruned_counts.append(stats.get("pruned", 0))
+        invalid_counts.append(stats.get("invalid", 0))
 
     fig_status = go.Figure(
         data=[
-            go.Bar(name="有効", x=turns_int, y=y_v, marker_color=DARK_THEME["accent"]),
-            go.Bar(name="破棄", x=turns_int, y=y_p, marker_color=DARK_THEME["pruned"]),
-            go.Bar(name="無効", x=turns_int, y=y_i, marker_color=DARK_THEME["invalid"]),
+            go.Bar(
+                name="有効", x=turns, y=valid_counts, marker_color=DARK_THEME["accent"]
+            ),
+            go.Bar(
+                name="破棄", x=turns, y=pruned_counts, marker_color=DARK_THEME["pruned"]
+            ),
+            go.Bar(
+                name="無効",
+                x=turns,
+                y=invalid_counts,
+                marker_color=DARK_THEME["invalid"],
+            ),
         ]
     )
     fig_status.update_layout(
@@ -868,10 +902,13 @@ def update_turn_stats(store_signal):
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
 
-    y_common = [get_stats(t).get("common_ancestor_depth", 0) for t in turns_int]
+    common_depths = [get_stats(turn).get("common_ancestor_depth", 0) for turn in turns]
     fig_common = go.Figure(
         go.Scatter(
-            x=turns_int, y=y_common, mode="lines+markers", line=dict(color="#00bcd4")
+            x=turns,
+            y=common_depths,
+            mode="lines+markers",
+            line=dict(color="#00bcd4"),
         )
     )
     fig_common.update_layout(
@@ -925,32 +962,33 @@ def update_turn_stats(store_signal):
     Output("all-paths-graph", "figure"),
     [Input("full-data-store", "data"), Input("turn-range-slider", "value")],
 )
-def update_all_graph(store_signal, turn_range):
+def update_all_graph(_store_signal, turn_range):
     processed = _DATA_CACHE.get("processed", {})
     nodes = processed.get("current_data", {}).get("nodes", [])
     if not nodes:
         return go.Figure()
 
-    inf = processed.get("current_data", {}).get("INF", 1e18)
-    min_t, max_t = turn_range
-    nodes_dict = processed.get("nodes_dict", {})
+    infinite_score = processed.get("current_data", {}).get("INF", 1e18)
+    min_turn, max_turn = turn_range
+    nodes_by_id = processed.get("nodes_dict", {})
 
     start_base_score = min(
-        [nn["score"] for nn in nodes if nn["turn"] == min_t] or [nodes[0]["score"]]
+        [node["score"] for node in nodes if node["turn"] == min_turn]
+        or [nodes[0]["score"]]
     )
 
     x, y = [], []
-    for n in nodes:
-        if not (min_t <= n["turn"] <= max_t) or n["score"] >= inf:
+    for node in nodes:
+        if not min_turn <= node["turn"] <= max_turn or node["score"] >= infinite_score:
             continue
 
-        pid = str(n["parent_id"])
-        if pid != "-1" and pid in nodes_dict:
-            x += [nodes_dict[pid]["turn"], n["turn"], None]
-            y += [nodes_dict[pid]["score"], n["score"], None]
-        elif pid == "-1":
-            x += [0, n["turn"], None]
-            y += [start_base_score, n["score"], None]
+        parent_id = str(node["parent_id"])
+        if parent_id != "-1" and parent_id in nodes_by_id:
+            x += [nodes_by_id[parent_id]["turn"], node["turn"], None]
+            y += [nodes_by_id[parent_id]["score"], node["score"], None]
+        elif parent_id == "-1":
+            x += [0, node["turn"], None]
+            y += [start_base_score, node["score"], None]
 
     fig = go.Figure(
         data=go.Scattergl(
@@ -976,7 +1014,7 @@ def update_all_graph(store_signal, turn_range):
     Output("clicked-child-store", "data"),
     Input({"type": "child-node-btn", "index": ALL}, "n_clicks"),
     Input("cytoscape-tree", "tapNodeData"),
-    prevent_initial_call=True
+    prevent_initial_call=True,
 )
 def handle_child_click(n_clicks_list, tap_data):
     ctx = dash.callback_context
@@ -1012,7 +1050,15 @@ def handle_child_click(n_clicks_list, tap_data):
 def display_node(node_data, show_goal, clicked_child, store_signal):
     processed = _DATA_CACHE.get("processed", {})
     if not processed:
-        return html.Div("ノードを選択してください", style={"color": "#aaa", "padding": "10px"}), "", "", go.Figure(), BASE_STYLESHEET
+        return (
+            html.Div(
+                "ノードを選択してください", style={"color": "#aaa", "padding": "10px"}
+            ),
+            "",
+            "",
+            go.Figure(),
+            BASE_STYLESHEET,
+        )
 
     inf_value = processed.get("current_data", {}).get("INF", 1e18)
     nodes_dict = processed.get("nodes_dict", {})
@@ -1031,7 +1077,9 @@ def display_node(node_data, show_goal, clicked_child, store_signal):
         else None
     )
 
-    detail_elements = html.Div("ノードを選択してください", style={"color": "#aaa", "padding": "10px"})
+    detail_elements = html.Div(
+        "ノードを選択してください", style={"color": "#aaa", "padding": "10px"}
+    )
     action_seq = ""
     state_visual = html.Div(
         "ノードを選択してください", style={"color": "#aaa", "padding": "10px"}
@@ -1039,12 +1087,7 @@ def display_node(node_data, show_goal, clicked_child, store_signal):
     fig = go.Figure()
     new_styles = list(BASE_STYLESHEET)
 
-    new_styles.append({
-        "selector": ".out-of-range",
-        "style": {
-            "opacity": 0.4
-        }
-    })
+    new_styles.append({"selector": ".out-of-range", "style": {"opacity": 0.4}})
 
     if node_data:
         if node_data["id"] == "-1":
@@ -1077,49 +1120,74 @@ def display_node(node_data, show_goal, clicked_child, store_signal):
             if children_ids:
                 btn_list = []
                 for cid in children_ids:
-                    is_active = (str(cid) == str(clicked_child))
+                    is_active = str(cid) == str(clicked_child)
                     bg_color = "#ffeb3b" if is_active else DARK_THEME["accent"]
                     color = "#000" if is_active else "#fff"
-                    btn_list.append(html.Button(
-                        f"ID: {cid}",
-                        id={"type": "child-node-btn", "index": str(cid)},
-                        className="modern-btn",
-                        style={"backgroundColor": bg_color, "color": color, "fontSize": "11px", "padding": "4px 8px"}
-                    ))
+                    btn_list.append(
+                        html.Button(
+                            f"ID: {cid}",
+                            id={"type": "child-node-btn", "index": str(cid)},
+                            className="modern-btn",
+                            style={
+                                "backgroundColor": bg_color,
+                                "color": color,
+                                "fontSize": "11px",
+                                "padding": "4px 8px",
+                            },
+                        )
+                    )
                 child_btns_container = html.Div(
-                    style={"marginTop": "10px", "backgroundColor": "#1e1e1e", "padding": "10px", "border": f'1px solid {DARK_THEME["border"]}'},
-                    children=[
-                        html.Span("子ノード:", style={"fontWeight": "bold", "fontSize": "12px", "display": "block", "marginBottom": "5px"}),
-                        html.Div(btn_list, style={"display": "flex", "flexWrap": "wrap", "gap": "5px"})
-                    ]
-                )
-
-            detail_elements = html.Div([
-                html.Pre(
-                    detail_text,
                     style={
-                        "whiteSpace": "pre-wrap",
+                        "marginTop": "10px",
                         "backgroundColor": "#1e1e1e",
                         "padding": "10px",
-                        "margin": "0",
                         "border": f'1px solid {DARK_THEME["border"]}',
-                    }
-                ),
-                child_btns_container if child_btns_container else html.Div()
-            ])
+                    },
+                    children=[
+                        html.Span(
+                            "子ノード:",
+                            style={
+                                "fontWeight": "bold",
+                                "fontSize": "12px",
+                                "display": "block",
+                                "marginBottom": "5px",
+                            },
+                        ),
+                        html.Div(
+                            btn_list,
+                            style={"display": "flex", "flexWrap": "wrap", "gap": "5px"},
+                        ),
+                    ],
+                )
+
+            detail_elements = html.Div(
+                [
+                    html.Pre(
+                        detail_text,
+                        style={
+                            "whiteSpace": "pre-wrap",
+                            "backgroundColor": "#1e1e1e",
+                            "padding": "10px",
+                            "margin": "0",
+                            "border": f'1px solid {DARK_THEME["border"]}',
+                        },
+                    ),
+                    child_btns_container if child_btns_container else html.Div(),
+                ]
+            )
 
             path_ids = []
-            curr = str(target["node_id"])
-            while curr != "-1" and curr in nodes_dict:
-                path_ids.append(curr)
-                curr = str(nodes_dict.get(curr, {}).get("parent_id", "-1"))
+            node_id = str(target["node_id"])
+            while node_id != "-1" and node_id in nodes_dict:
+                path_ids.append(node_id)
+                node_id = str(nodes_dict.get(node_id, {}).get("parent_id", "-1"))
             path_ids.append("-1")
 
             action_seq = "".join(
                 [
-                    nodes_dict[nid].get("action", "")
-                    for nid in path_ids[::-1]
-                    if nid in nodes_dict
+                    nodes_dict[node_id].get("action", "")
+                    for node_id in path_ids[::-1]
+                    if node_id in nodes_dict
                 ]
             )
             state_visual = generate_board_visual(action_seq)
@@ -1140,10 +1208,14 @@ def display_node(node_data, show_goal, clicked_child, store_signal):
                         queue.append(child)
 
             path_scores = [
-                nodes_dict[nid]["score"] for nid in path_ids if nid in nodes_dict
+                nodes_dict[node_id]["score"]
+                for node_id in path_ids
+                if node_id in nodes_dict
             ]
             path_turns = [
-                nodes_dict[nid]["turn"] for nid in path_ids if nid in nodes_dict
+                nodes_dict[node_id]["turn"]
+                for node_id in path_ids
+                if node_id in nodes_dict
             ]
             path_thresholds = [
                 snapshots_dict[t]["threshold"] if t in snapshots_dict else None
@@ -1197,7 +1269,7 @@ def display_node(node_data, show_goal, clicked_child, store_signal):
                 new_styles.append(
                     {
                         "selector": ",".join(
-                            [f'node[id="{nid}"]' for nid in subtree_node_ids]
+                            [f'node[id="{node_id}"]' for node_id in subtree_node_ids]
                         ),
                         "style": {"border-width": "3px", "border-color": "#ff9800"},
                     }
@@ -1206,7 +1278,7 @@ def display_node(node_data, show_goal, clicked_child, store_signal):
                 new_styles.append(
                     {
                         "selector": ",".join(
-                            [f'edge[id="{eid}"]' for eid in subtree_edge_ids]
+                            [f'edge[id="{edge_id}"]' for edge_id in subtree_edge_ids]
                         ),
                         "style": {
                             "width": 3,
@@ -1218,7 +1290,9 @@ def display_node(node_data, show_goal, clicked_child, store_signal):
             if path_ids:
                 new_styles.append(
                     {
-                        "selector": ",".join([f'node[id="{nid}"]' for nid in path_ids]),
+                        "selector": ",".join(
+                            [f'node[id="{node_id}"]' for node_id in path_ids]
+                        ),
                         "style": {
                             "border-width": "3px",
                             "border-color": DARK_THEME["highlight"],
@@ -1233,7 +1307,7 @@ def display_node(node_data, show_goal, clicked_child, store_signal):
                 new_styles.append(
                     {
                         "selector": ",".join(
-                            [f'edge[id="{eid}"]' for eid in path_edges_ids]
+                            [f'edge[id="{edge_id}"]' for edge_id in path_edges_ids]
                         ),
                         "style": {
                             "width": 4,
@@ -1256,31 +1330,33 @@ def display_node(node_data, show_goal, clicked_child, store_signal):
                             "font-weight": "bold",
                             "width": "45px",
                             "height": "45px",
-                            "z-index": "100"
+                            "z-index": "100",
                         },
                     }
                 )
 
     if show_goal:
-        goal_nodes = [n for n in nodes_dict.values() if n.get("is_answer", False)]
+        goal_nodes = [
+            node for node in nodes_dict.values() if node.get("is_answer", False)
+        ]
         goal_path_ids = set()
         goal_edge_ids = set()
 
-        for g in goal_nodes:
-            curr = str(g["node_id"])
-            while curr != "-1" and curr in nodes_dict:
-                goal_path_ids.add(curr)
-                p = str(nodes_dict[curr]["parent_id"])
-                if p != "-1" or curr != "-1":
-                    goal_edge_ids.add(f"e{p}_{curr}")
-                curr = p
+        for goal_node in goal_nodes:
+            node_id = str(goal_node["node_id"])
+            while node_id != "-1" and node_id in nodes_dict:
+                goal_path_ids.add(node_id)
+                parent_id = str(nodes_dict[node_id]["parent_id"])
+                if parent_id != "-1" or node_id != "-1":
+                    goal_edge_ids.add(f"e{parent_id}_{node_id}")
+                node_id = parent_id
             goal_path_ids.add("-1")
 
         if goal_path_ids:
             new_styles.append(
                 {
                     "selector": ",".join(
-                        [f'node[id="{nid}"]' for nid in goal_path_ids]
+                        [f'node[id="{node_id}"]' for node_id in goal_path_ids]
                     ),
                     "style": {
                         "border-width": "5px",
@@ -1292,7 +1368,7 @@ def display_node(node_data, show_goal, clicked_child, store_signal):
             new_styles.append(
                 {
                     "selector": ",".join(
-                        [f'edge[id="{eid}"]' for eid in goal_edge_ids]
+                        [f'edge[id="{edge_id}"]' for edge_id in goal_edge_ids]
                     ),
                     "style": {
                         "width": 6,
@@ -1325,10 +1401,15 @@ def manage_folding(n_fold, n_fold_all, tap_data, collapsed):
         if active_collapsed:
             collapsed = [c for c in collapsed if c not in pruned_ids]
         else:
-            collapsed.extend([pid for pid in pruned_ids if pid not in collapsed])
+            collapsed.extend(
+                [node_id for node_id in pruned_ids if node_id not in collapsed]
+            )
     elif "toggle-fold-button" in trigger and tap_data and tap_data.get("id") != "-1":
-        nid = tap_data["id"]
-        collapsed.remove(nid) if nid in collapsed else collapsed.append(nid)
+        node_id = tap_data["id"]
+        if node_id in collapsed:
+            collapsed.remove(node_id)
+        else:
+            collapsed.append(node_id)
     return collapsed
 
 
@@ -1344,19 +1425,19 @@ def manage_folding(n_fold, n_fold_all, tap_data, collapsed):
 def manage_bookmarks(n_clicks, tap_data, bookmarks):
     btn_label = "⭐ ブックマークに追加"
     if tap_data and tap_data.get("id") != "-1":
-        nid = tap_data["id"]
-        if nid in bookmarks:
-            bookmarks.remove(nid)
+        node_id = tap_data["id"]
+        if node_id in bookmarks:
+            bookmarks.remove(node_id)
         else:
-            bookmarks.append(nid)
+            bookmarks.append(node_id)
             btn_label = "⭐ ブックマークを解除"
 
     processed = _DATA_CACHE.get("processed", {})
     nodes_dict = processed.get("nodes_dict", {})
 
     elements = []
-    for bid in bookmarks:
-        node = nodes_dict.get(bid)
+    for bookmarked_id in bookmarks:
+        node = nodes_dict.get(bookmarked_id)
         if node:
             elements.append(
                 html.Div(
@@ -1368,7 +1449,8 @@ def manage_bookmarks(n_clicks, tap_data, bookmarks):
                     },
                     children=[
                         html.B(
-                            f"Node ID: {bid}", style={"color": DARK_THEME["bookmark"]}
+                            f"Node ID: {bookmarked_id}",
+                            style={"color": DARK_THEME["bookmark"]},
                         ),
                         html.P(
                             f"Turn: {node['turn']} | Score: {node['score']}",

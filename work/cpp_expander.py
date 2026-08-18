@@ -1,53 +1,53 @@
 # -*- coding: utf-8 -*-
 
-# user settings --------------------------------------------------
-# `./titan_cpplib` がある絶対パス
+# 利用者ごとの設定 ------------------------------------------------
+# titan_cpplib が置かれているディレクトリ
 LIB_PATH = (
     "/mnt/c/Users/titan/source/Library_cpp/",
     "C:\\Users\\titan\\source\\Library_cpp\\",
     "/home/titan/source/Library_cpp/",
 )
-#  ---------------------------------------------------------------
+# 設定ここまで ----------------------------------------------------
 
-from logging import getLogger, basicConfig
-import os
-import pyperclip
-import shutil
 import argparse
+import os
+import shutil
+from logging import basicConfig, getLogger
+
+import pyperclip
 
 logger = getLogger(__name__)
 
 
-def to_red(arg):
+def to_red(arg: object) -> str:
     return f"\u001b[31m{arg}\u001b[0m"
 
 
-def to_green(arg):
+def to_green(arg: object) -> str:
     return f"\u001b[32m{arg}\u001b[0m"
 
 
 class CppExpander:
-
     @staticmethod
-    def init_clipboard():
-        """pyperclipを日本語に対応させる"""
+    def init_clipboard() -> None:
+        """日本語を扱えるクリップボードコマンドを選ぶ"""
         for command in ["wl-clipboard", "xclip", "xsel"]:
             if shutil.which(command):
                 pyperclip.set_clipboard(command)
                 break
 
     def __init__(self) -> None:
-        """`CppExpander`をインスタンス化する"""
+        """展開対象と出力内容を初期化する"""
         self.input_file_path: str = "None"
         self.outputs: list[str] = []
         self.added_file: set[str] = set()
 
     def expand(self, input_file_path: str, output_fie_path: str) -> None:
-        """input_filepathのコードを展開してoutput_fiepathに書き出す
+        """C++ の include を展開し、ファイルまたはクリップボードへ出力する
 
         Args:
-            input_file_path (str): 入力ファイル
-            output_fie_path (str): 出力ファイル / `clip`のとき、クリップボードに貼り付ける
+            input_file_path: 入力ファイル
+            output_fie_path: 出力先で ``clip`` ならクリップボードへコピーする
         """
         if not os.path.exists(input_file_path):
             logger.critical(
@@ -60,14 +60,15 @@ class CppExpander:
         self.added_file.clear()
         self._get_code(self.input_file_path)
         output_code = "".join(self.outputs)
-        if output_fie_path in ["clip"]:
-            output_fie_path = "clipboard"
+        output_path = output_fie_path
+        if output_path == "clip":
+            output_path = "clipboard"
             pyperclip.copy(output_code)
         else:
-            with open(output_fie_path, "w", encoding="utf-8") as f:
-                f.write(output_code)
+            with open(output_path, "w", encoding="utf-8") as output_file:
+                output_file.write(output_code)
         logger.info(to_green("The process completed successfully."))
-        logger.info(to_green(f'Output file: "{output_fie_path}".'))
+        logger.info(to_green(f'Output file: "{output_path}".'))
 
     def _get_code(self, input_file_path: str) -> None:
         input_line_num = 0
@@ -75,19 +76,19 @@ class CppExpander:
             for line in input_file:
                 input_line_num += 1
                 if line.startswith(f'#include "titan_cpplib'):
-                    _, s = line.split()
-                    target_file = s.replace('"', "")
+                    _, include_path = line.split()
+                    target_file = include_path.replace('"', "")
                     if target_file in self.added_file:
                         continue
                     self.added_file.add(target_file)
                     for lib_path in LIB_PATH:
-                        new_path = f"{lib_path}{target_file}"
-                        if os.path.exists(new_path):
+                        expanded_path = f"{lib_path}{target_file}"
+                        if os.path.exists(expanded_path):
                             self.outputs.append(f"// {line}")
                             logger.info(
                                 f"[include] \"{target_file.replace(lib_path, '')}\""
                             )
-                            self._get_code(new_path)
+                            self._get_code(expanded_path)
                             break
                     else:
                         logger.critical(

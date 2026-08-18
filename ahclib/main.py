@@ -1,15 +1,22 @@
-from .parallel_tester import run_test
-from .ahc_util import to_bold, to_blue
-from .optimizer import run_optimizer, run_optimizer_dashboard
-import sys
-import importlib.util
 import argparse
-import shutil
+import importlib.util
 import os
+import shutil
+import sys
+from typing import Any, Optional, Sequence
+
 import click
 
+from .ahc_util import to_blue, to_bold
+from .optimizer import run_optimizer, run_optimizer_dashboard
+from .parallel_tester import run_test
 
-def load_class_from_path(file_path, class_name=None):
+
+def load_class_from_path(
+    file_path: str,
+    class_name: Optional[str] = None,
+) -> Any:
+    """指定した Python ファイルを読み、モジュールまたは指定クラスを返す"""
     module_name = file_path.replace("/", ".").replace("\\", ".").split(".")[0]
     spec = importlib.util.spec_from_file_location(module_name, file_path)
     module = importlib.util.module_from_spec(spec)
@@ -29,7 +36,7 @@ def _add_settings_argument(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def get_args(argv=None) -> argparse.Namespace:
+def get_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -102,11 +109,10 @@ def get_args(argv=None) -> argparse.Namespace:
         default=False,
         action="store_true",
     )
-    args = parser.parse_args(argv)
-    return args
+    return parser.parse_args(argv)
 
 
-def main():
+def main() -> None:
     args = get_args()
 
     if args.command == "vis":
@@ -119,11 +125,11 @@ def main():
         from .beam.app import create_app
         from .beam.default_visualizer import generate_board_visual as _default_vis
 
-        vis_path = args.visualizer or os.path.join(os.getcwd(), "visualizer.py")
-        if os.path.exists(vis_path):
-            vis_module = load_class_from_path(vis_path)
+        visualizer_path = args.visualizer or os.path.join(os.getcwd(), "visualizer.py")
+        if os.path.exists(visualizer_path):
+            visualizer_module = load_class_from_path(visualizer_path)
             generate_board_visual = getattr(
-                vis_module, "generate_board_visual", _default_vis
+                visualizer_module, "generate_board_visual", _default_vis
             )
         else:
             generate_board_visual = _default_vis
@@ -148,8 +154,8 @@ def main():
         except FileNotFoundError:
             print(f"Error: {source_file} does not exist.", file=sys.stderr)
             sys.exit(1)
-        except Exception as e:
-            print(f"Error: {e}", file=sys.stderr)
+        except Exception as error:
+            print(f"Error: {error}", file=sys.stderr)
             sys.exit(1)
         sys.exit(0)
 
@@ -158,8 +164,8 @@ def main():
         if click.confirm("Delete the directory ./ahclib_results/?"):
             try:
                 shutil.rmtree("./ahclib_results/")
-            except Exception as e:
-                print(f"Error occurred: {e}", file=sys.stderr)
+            except Exception as error:
+                print(f"Error occurred: {error}", file=sys.stderr)
             else:
                 print("Directory removed successfully.", file=sys.stderr)
         else:

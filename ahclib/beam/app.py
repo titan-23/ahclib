@@ -1,26 +1,35 @@
 import json
 import os
 import time
+from typing import Any, Callable, Optional
+
 import dash
-from dash import html, dcc, Input, Output, State, callback_context, ALL
 import dash_cytoscape as cyto
 import plotly.graph_objects as go
+from dash import ALL, Input, Output, State, callback_context, dcc, html
+from dash.development.base_component import Component
 
 from .config import (
-    DARK_THEME,
     BASE_STYLESHEET,
-    tab_style,
+    DARK_THEME,
     tab_selected_style,
+    tab_style,
 )
-from .data import load_and_process_data, compute_compact_layout
+from .data import compute_compact_layout, load_and_process_data
 
-_DATA_CACHE = {"processed": {}, "compact_layout_cache": {}}
+_DATA_CACHE: dict[str, Any] = {
+    "processed": {},
+    "compact_layout_cache": {},
+}
 _HISTORY_PATH = "history.json"
-_generate_board_visual = None
-_BOARD_CACHE: dict = {}
+_generate_board_visual: Optional[Callable[[str], Component]] = None
+_BOARD_CACHE: dict[str, Component] = {}
 
 
-def create_app(generate_board_visual, history_path="history.json"):
+def create_app(
+    generate_board_visual: Callable[[str], Component],
+    history_path: str = "history.json",
+) -> dash.Dash:
     global _HISTORY_PATH, _generate_board_visual, _BOARD_CACHE
     _HISTORY_PATH = history_path
     _generate_board_visual = generate_board_visual
@@ -28,7 +37,9 @@ def create_app(generate_board_visual, history_path="history.json"):
 
     cyto.load_extra_layouts()
 
-    assets_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets")
+    assets_folder = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "assets"
+    )
 
     app = dash.Dash(
         __name__,
@@ -87,10 +98,16 @@ def create_app(generate_board_visual, history_path="history.json"):
                                 "再読み込み",
                                 id="reload-button",
                                 className="modern-btn",
-                                style={"marginRight": "10px", "backgroundColor": "#4caf50"},
+                                style={
+                                    "marginRight": "10px",
+                                    "backgroundColor": "#4caf50",
+                                },
                             ),
                             html.Button(
-                                "再生", id="play-button", n_clicks=0, className="modern-btn"
+                                "再生",
+                                id="play-button",
+                                n_clicks=0,
+                                className="modern-btn",
                             ),
                         ]
                     ),
@@ -153,7 +170,10 @@ def create_app(generate_board_visual, history_path="history.json"):
                                         "label": " 破棄・無効ノード表示",
                                         "value": "show_pruned",
                                     },
-                                    {"label": " スコアヒートマップ", "value": "heatmap"},
+                                    {
+                                        "label": " スコアヒートマップ",
+                                        "value": "heatmap",
+                                    },
                                     {"label": " コンパクト", "value": "compact"},
                                 ],
                                 value=[],
@@ -367,7 +387,11 @@ def create_app(generate_board_visual, history_path="history.json"):
                                 ],
                             ),
                             html.Div(
-                                style={"padding": "10px", "flex": "1", "overflowY": "auto"},
+                                style={
+                                    "padding": "10px",
+                                    "flex": "1",
+                                    "overflowY": "auto",
+                                },
                                 children=[
                                     dcc.Tabs(
                                         id="info-tabs",
@@ -393,13 +417,17 @@ def create_app(generate_board_visual, history_path="history.json"):
                                                                 className="modern-btn",
                                                                 style={
                                                                     "marginLeft": "10px",
-                                                                    "backgroundColor": DARK_THEME["bookmark"],
+                                                                    "backgroundColor": DARK_THEME[
+                                                                        "bookmark"
+                                                                    ],
                                                                     "color": "#000",
                                                                 },
                                                             ),
                                                             html.Div(
                                                                 id="node-detail-output",
-                                                                style={"marginTop": "15px"},
+                                                                style={
+                                                                    "marginTop": "15px"
+                                                                },
                                                             ),
                                                             html.Label(
                                                                 "Action Path:",
@@ -410,7 +438,9 @@ def create_app(generate_board_visual, history_path="history.json"):
                                                                 },
                                                             ),
                                                             html.Div(
-                                                                style={"position": "relative"},
+                                                                style={
+                                                                    "position": "relative"
+                                                                },
                                                                 children=[
                                                                     dcc.Textarea(
                                                                         id="action-path-output",
@@ -467,7 +497,9 @@ def create_app(generate_board_visual, history_path="history.json"):
                                                 children=[
                                                     dcc.Graph(
                                                         id="score-history-graph",
-                                                        config={"displayModeBar": False},
+                                                        config={
+                                                            "displayModeBar": False
+                                                        },
                                                         style={"marginTop": "15px"},
                                                     )
                                                 ],
@@ -511,26 +543,26 @@ def create_app(generate_board_visual, history_path="history.json"):
     )
     def load_data(n_clicks, _):
         global _DATA_CACHE
-        # ファイルが無変更なら再処理を飛ばす。処理結果は決定的で同一。
+        # ファイルが変わっていなければ前回の処理結果を使う
         try:
-            st = os.stat(_HISTORY_PATH)
-            sig = (st.st_mtime, st.st_size)
+            file_status = os.stat(_HISTORY_PATH)
+            file_signature = (file_status.st_mtime, file_status.st_size)
         except OSError:
-            sig = None
+            file_signature = None
         if (
-            sig is not None
-            and _DATA_CACHE.get("file_sig") == sig
+            file_signature is not None
+            and _DATA_CACHE.get("file_sig") == file_signature
             and _DATA_CACHE.get("processed")
         ):
             return {"ts": time.time()}, _DATA_CACHE.get("max_t", 1), None
-        processed, max_t, marks = load_and_process_data(_HISTORY_PATH)
+        processed, max_turn, marks = load_and_process_data(_HISTORY_PATH)
         _DATA_CACHE["processed"] = processed
         _DATA_CACHE["compact_layout_cache"] = {}
         _DATA_CACHE["active_path_cache"] = {}
         _DATA_CACHE["elements_cache"] = {}
-        _DATA_CACHE["max_t"] = max_t
-        _DATA_CACHE["file_sig"] = sig
-        return {"ts": time.time()}, max_t, None
+        _DATA_CACHE["max_t"] = max_turn
+        _DATA_CACHE["file_sig"] = file_signature
+        return {"ts": time.time()}, max_turn, None
 
     @app.callback(
         Output("turn-range-slider", "value"),
@@ -586,7 +618,9 @@ def create_app(generate_board_visual, history_path="history.json"):
             return dash.no_update, dash.no_update
 
         trigger = (
-            callback_context.triggered[0]["prop_id"] if callback_context.triggered else ""
+            callback_context.triggered[0]["prop_id"]
+            if callback_context.triggered
+            else ""
         )
         do_fit = trigger in ["fit-button.n_clicks", "full-data-store.data", ""]
 
@@ -606,7 +640,7 @@ def create_app(generate_board_visual, history_path="history.json"):
         if not nodes:
             return [], dash.no_update
 
-        # 同じ入力なら作り直さず保持結果を返す。出力は同一。上限を超えたら破棄する。
+        # 同じ入力の描画要素を再利用し、件数が上限に達したら破棄する
         cache_key = (
             tuple(turn_range),
             tuple(sorted(visibility or [])),
@@ -615,8 +649,8 @@ def create_app(generate_board_visual, history_path="history.json"):
             tree_direction,
             search_query or "",
         )
-        el_cache = _DATA_CACHE.setdefault("elements_cache", {})
-        cached_elements = el_cache.get(cache_key)
+        elements_cache = _DATA_CACHE.setdefault("elements_cache", {})
+        cached_elements = elements_cache.get(cache_key)
         if cached_elements is not None:
             return cached_elements, layout_config
 
@@ -627,70 +661,73 @@ def create_app(generate_board_visual, history_path="history.json"):
         base_positions = processed.get("base_positions", {})
         inf_value = processed.get("current_data", {}).get("INF", 1e18)
 
-        min_t, max_t = turn_range
+        minimum_turn, maximum_turn = turn_range
 
-        valid_max_t = max_t
-        while valid_max_t >= min_t:
-            active_nodes = snapshots_dict.get(valid_max_t, {}).get("active", [])
+        latest_active_turn = maximum_turn
+        while latest_active_turn >= minimum_turn:
+            active_nodes = snapshots_dict.get(latest_active_turn, {}).get("active", [])
             if active_nodes:
-                terminals = set(str(x) for x in active_nodes)
+                terminal_ids = {str(node_id) for node_id in active_nodes}
                 break
-            valid_max_t -= 1
+            latest_active_turn -= 1
         else:
-            terminals = set()
+            terminal_ids = set()
 
-        # 生存経路は valid_max_t だけで決まる。発火ごとの遡りをキャッシュする。読み取り専用で共有する。
-        ap_cache = _DATA_CACHE.setdefault("active_path_cache", {})
-        active_path = ap_cache.get(valid_max_t)
+        # 最後に生存ノードがあるターンから根までの経路を再利用する
+        active_path_cache = _DATA_CACHE.setdefault("active_path_cache", {})
+        active_path = active_path_cache.get(latest_active_turn)
         if active_path is None:
             active_path = set()
-            curr = list(terminals)
-            while curr:
+            current_level = list(terminal_ids)
+            while current_level:
                 next_nodes = []
-                for nid in curr:
-                    if nid in nodes_dict:
-                        active_path.add(nid)
-                        pid = nodes_dict[nid]["spid"]
-                        if pid != "-1" and pid not in active_path:
-                            next_nodes.append(pid)
-                curr = next_nodes
+                for node_id in current_level:
+                    if node_id in nodes_dict:
+                        active_path.add(node_id)
+                        parent_id = nodes_dict[node_id]["spid"]
+                        if parent_id != "-1" and parent_id not in active_path:
+                            next_nodes.append(parent_id)
+                current_level = next_nodes
             active_path.add("-1")
-            ap_cache[valid_max_t] = active_path
+            active_path_cache[latest_active_turn] = active_path
 
         compact_mode = "compact" in visibility
         positions_map = base_positions
         if compact_mode and active_path:
-            cache = _DATA_CACHE.setdefault("compact_layout_cache", {})
-            cache_key = valid_max_t
-            compact_positions = cache.get(cache_key)
+            compact_layout_cache = _DATA_CACHE.setdefault("compact_layout_cache", {})
+            compact_cache_key = latest_active_turn
+            compact_positions = compact_layout_cache.get(compact_cache_key)
             if compact_positions is None:
-                raw_pos = compute_compact_layout(
+                raw_positions = compute_compact_layout(
                     active_path, children_dict, nodes_dict, root_id="-1"
                 )
                 compact_positions = {}
-                for nid, x in raw_pos.items():
-                    if nid == "-1":
+                for node_id, horizontal_position in raw_positions.items():
+                    if node_id == "-1":
                         depth = 0
-                    elif nid in nodes_dict:
-                        depth = nodes_dict[nid]["turn"]
+                    elif node_id in nodes_dict:
+                        depth = nodes_dict[node_id]["turn"]
                     else:
                         depth = 0
-                    compact_positions[nid] = {"depth": depth, "breadth_center": x}
-                cache[cache_key] = compact_positions
+                    compact_positions[node_id] = {
+                        "depth": depth,
+                        "breadth_center": horizontal_position,
+                    }
+                compact_layout_cache[compact_cache_key] = compact_positions
             positions_map = compact_positions
 
         collapsed_set = set(collapsed_ids)
-        # 折畳ノードの子孫だけを集める。全ノード走査を避ける。隠す集合は従来と同一。
+        # 折り畳んだノードの子孫だけを隠す
         hidden_ids = set()
         if collapsed_set:
             stack = []
-            for c in collapsed_set:
-                stack.extend(children_dict.get(c, []))
+            for collapsed_id in collapsed_set:
+                stack.extend(children_dict.get(collapsed_id, []))
             while stack:
-                h = stack.pop()
-                if h not in hidden_ids:
-                    hidden_ids.add(h)
-                    stack.extend(children_dict.get(h, []))
+                hidden_id = stack.pop()
+                if hidden_id not in hidden_ids:
+                    hidden_ids.add(hidden_id)
+                    stack.extend(children_dict.get(hidden_id, []))
 
         show_pruned = "show_pruned" in visibility and not compact_mode
         use_heatmap = "heatmap" in visibility
@@ -703,16 +740,16 @@ def create_app(generate_board_visual, history_path="history.json"):
             breadth_gap = 60
 
         default_pos = {"depth": 0, "breadth_center": 0.0}
-        pos_start = positions_map.get("-1", default_pos)
+        start_position = positions_map.get("-1", default_pos)
         start_x = (
-            pos_start["breadth_center"] * breadth_gap
+            start_position["breadth_center"] * breadth_gap
             if tree_direction == "TB"
-            else pos_start["depth"] * depth_gap
+            else start_position["depth"] * depth_gap
         )
         start_y = (
-            pos_start["depth"] * depth_gap
+            start_position["depth"] * depth_gap
             if tree_direction == "TB"
-            else pos_start["breadth_center"] * breadth_gap
+            else start_position["breadth_center"] * breadth_gap
         )
 
         elements = [
@@ -724,100 +761,114 @@ def create_app(generate_board_visual, history_path="history.json"):
         ]
 
         visible_ids = set()
-        for n in nodes:
-            nid = n["sid"]
-            if nid in hidden_ids:
+        for node in nodes:
+            node_id = node["sid"]
+            if node_id in hidden_ids:
                 continue
-            if min_t <= n["turn"] <= max_t:
-                if not show_pruned and nid not in active_path:
+            if minimum_turn <= node["turn"] <= maximum_turn:
+                if not show_pruned and node_id not in active_path:
                     continue
-                visible_ids.add(nid)
-                curr_pid = n["spid"]
-                while curr_pid != "-1" and curr_pid not in visible_ids:
-                    if curr_pid in nodes_dict and nodes_dict[curr_pid]["turn"] < min_t:
-                        visible_ids.add(curr_pid)
-                        curr_pid = nodes_dict[curr_pid]["spid"]
+                visible_ids.add(node_id)
+                current_parent_id = node["spid"]
+                while (
+                    current_parent_id != "-1" and current_parent_id not in visible_ids
+                ):
+                    if (
+                        current_parent_id in nodes_dict
+                        and nodes_dict[current_parent_id]["turn"] < minimum_turn
+                    ):
+                        visible_ids.add(current_parent_id)
+                        current_parent_id = nodes_dict[current_parent_id]["spid"]
                     else:
                         break
 
-        visible_nodes = [nodes_dict[nid] for nid in visible_ids if nid in nodes_dict]
-        visible_nodes.sort(key=lambda x: (x["turn"], x["parent_id"], x["score"]))
+        visible_nodes = [
+            nodes_dict[node_id] for node_id in visible_ids if node_id in nodes_dict
+        ]
+        visible_nodes.sort(
+            key=lambda node: (
+                node["turn"],
+                node["parent_id"],
+                node["score"],
+            )
+        )
 
         valid_ids = {"-1"}
-        for n in visible_nodes:
-            nid = n["sid"]
-            valid_ids.add(nid)
+        for node in visible_nodes:
+            node_id = node["sid"]
+            valid_ids.add(node_id)
 
-            if n.get("is_answer", False):
-                cls = "status-answer"
-            elif n["status"] == 2:
-                cls = "status-invalid"
-            elif nid in active_path:
-                cls = "status-active"
+            if node.get("is_answer", False):
+                classes = "status-answer"
+            elif node["status"] == 2:
+                classes = "status-invalid"
+            elif node_id in active_path:
+                classes = "status-active"
             else:
-                cls = "status-pruned"
+                classes = "status-pruned"
 
-            # status-pruned と status-invalid は font-size 0 で文字を出さない。label を省く。
-            has_text = cls == "status-active" or cls == "status-answer"
+            # 破棄ノードと無効ノードは文字を表示しない
+            has_text = classes == "status-active" or classes == "status-answer"
 
-            if nid in collapsed_ids:
-                cls += " folded"
-            if nid in bookmarked_ids:
-                cls += " bookmarked"
+            if node_id in collapsed_ids:
+                classes += " folded"
+            if node_id in bookmarked_ids:
+                classes += " bookmarked"
 
             if search_query and (
-                search_query in str(n["score"])
-                or search_query in n.get("action", "")
-                or search_query in str(n.get("hash", ""))
+                search_query in str(node["score"])
+                or search_query in node.get("action", "")
+                or search_query in str(node.get("hash", ""))
             ):
-                cls += " searched"
+                classes += " searched"
 
-            if n["turn"] < min_t:
-                cls += " out-of-range"
+            if node["turn"] < minimum_turn:
+                classes += " out-of-range"
 
-            el_data = {"id": nid}
+            element_data = {"id": node_id}
             if has_text:
-                el_data["label"] = n["label"]
-            element = {"data": el_data, "classes": cls}
+                element_data["label"] = node["label"]
+            element = {"data": element_data, "classes": classes}
 
-            pos = positions_map.get(nid, default_pos)
+            position = positions_map.get(node_id, default_pos)
             if tree_direction == "TB":
                 element["position"] = {
-                    "x": pos["breadth_center"] * breadth_gap,
-                    "y": pos["depth"] * depth_gap,
+                    "x": position["breadth_center"] * breadth_gap,
+                    "y": position["depth"] * depth_gap,
                 }
             else:
                 element["position"] = {
-                    "x": pos["depth"] * depth_gap,
-                    "y": pos["breadth_center"] * breadth_gap,
+                    "x": position["depth"] * depth_gap,
+                    "y": position["breadth_center"] * breadth_gap,
                 }
 
             if use_heatmap:
-                element["data"]["bg_color"] = n["heatmap_color"]
+                element["data"]["bg_color"] = node["heatmap_color"]
                 element["classes"] += " heatmap-node"
 
             elements.append(element)
 
-        for n in visible_nodes:
-            nid, pid = n["sid"], n["spid"]
-            if pid in valid_ids:
+        for node in visible_nodes:
+            node_id = node["sid"]
+            parent_id = node["spid"]
+            if parent_id in valid_ids:
                 elements.append(
                     {
                         "data": {
-                            "id": f"e{pid}_{nid}",
-                            "source": pid,
-                            "target": nid,
-                            "action": n.get("action", ""),
+                            "id": f"e{parent_id}_{node_id}",
+                            "source": parent_id,
+                            "target": node_id,
+                            "action": node.get("action", ""),
                         }
                     }
                 )
-            elif nid != "-1":
+            elif node_id != "-1":
                 elements.append(
                     {
                         "data": {
-                            "id": f"e_start_{nid}",
+                            "id": f"e_start_{node_id}",
                             "source": "-1",
-                            "target": nid,
+                            "target": node_id,
                             "action": "(省略)",
                         },
                         "classes": "dummy-edge",
@@ -832,9 +883,9 @@ def create_app(generate_board_visual, history_path="history.json"):
             "refresh": time.time(),
         }
 
-        if len(el_cache) >= 64:
-            el_cache.clear()
-        el_cache[cache_key] = elements
+        if len(elements_cache) >= 64:
+            elements_cache.clear()
+        elements_cache[cache_key] = elements
         return elements, layout_config
 
     @app.callback(
@@ -842,8 +893,8 @@ def create_app(generate_board_visual, history_path="history.json"):
         Input("full-data-store", "data"),
         Input("left-tabs", "value"),
     )
-    def update_turn_stats(store_signal, left_tab):
-        # 統計タブを開いている時だけ図を作る。表示内容は同一。
+    def update_turn_stats(_store_signal, left_tab):
+        # 統計タブを開いている時だけ図を作る
         if left_tab != "tab-stats":
             return dash.no_update
         processed = _DATA_CACHE.get("processed")
@@ -851,19 +902,19 @@ def create_app(generate_board_visual, history_path="history.json"):
             return html.Div("データがありません", style={"padding": "20px"})
 
         turn_stats = processed.get("turn_stats", {})
-        turns_int = sorted([int(t) for t in turn_stats.keys()])
+        turns = sorted(int(turn) for turn in turn_stats)
 
-        if not turns_int:
+        if not turns:
             return html.Div("統計データがありません", style={"padding": "20px"})
 
-        def get_stats(t):
-            return turn_stats.get(t) or turn_stats.get(str(t), {})
+        def get_stats(turn):
+            return turn_stats.get(turn) or turn_stats.get(str(turn), {})
 
         x_box, y_box = [], []
-        for t in turns_int:
-            for s in get_stats(t).get("scores", []):
-                x_box.append(t)
-                y_box.append(s)
+        for turn in turns:
+            for score in get_stats(turn).get("scores", []):
+                x_box.append(turn)
+                y_box.append(score)
 
         fig_score = go.Figure(
             go.Box(x=x_box, y=y_box, name="Score", marker_color=DARK_THEME["accent"])
@@ -876,9 +927,9 @@ def create_app(generate_board_visual, history_path="history.json"):
             plot_bgcolor=DARK_THEME["background"],
         )
 
-        y_div = [get_stats(t).get("unique_parents", 0) for t in turns_int]
+        parent_counts = [get_stats(turn).get("unique_parents", 0) for turn in turns]
         fig_div = go.Figure(
-            go.Bar(x=turns_int, y=y_div, marker_color=DARK_THEME["bookmark"])
+            go.Bar(x=turns, y=parent_counts, marker_color=DARK_THEME["bookmark"])
         )
         fig_div.update_layout(
             title="生存ノードの親の数",
@@ -888,20 +939,40 @@ def create_app(generate_board_visual, history_path="history.json"):
             plot_bgcolor=DARK_THEME["background"],
         )
 
-        y_v, y_p, y_i = [], [], []
-        for t in turns_int:
-            s = get_stats(t)
-            y_v.append(
-                max(0, s.get("generated", 0) - s.get("pruned", 0) - s.get("invalid", 0))
+        valid_counts, pruned_counts, invalid_counts = [], [], []
+        for turn in turns:
+            stats = get_stats(turn)
+            valid_counts.append(
+                max(
+                    0,
+                    stats.get("generated", 0)
+                    - stats.get("pruned", 0)
+                    - stats.get("invalid", 0),
+                )
             )
-            y_p.append(s.get("pruned", 0))
-            y_i.append(s.get("invalid", 0))
+            pruned_counts.append(stats.get("pruned", 0))
+            invalid_counts.append(stats.get("invalid", 0))
 
         fig_status = go.Figure(
             data=[
-                go.Bar(name="有効", x=turns_int, y=y_v, marker_color=DARK_THEME["accent"]),
-                go.Bar(name="破棄", x=turns_int, y=y_p, marker_color=DARK_THEME["pruned"]),
-                go.Bar(name="無効", x=turns_int, y=y_i, marker_color=DARK_THEME["invalid"]),
+                go.Bar(
+                    name="有効",
+                    x=turns,
+                    y=valid_counts,
+                    marker_color=DARK_THEME["accent"],
+                ),
+                go.Bar(
+                    name="破棄",
+                    x=turns,
+                    y=pruned_counts,
+                    marker_color=DARK_THEME["pruned"],
+                ),
+                go.Bar(
+                    name="無効",
+                    x=turns,
+                    y=invalid_counts,
+                    marker_color=DARK_THEME["invalid"],
+                ),
             ]
         )
         fig_status.update_layout(
@@ -911,13 +982,20 @@ def create_app(generate_board_visual, history_path="history.json"):
             margin=dict(l=20, r=20, t=40, b=20),
             paper_bgcolor=DARK_THEME["panel"],
             plot_bgcolor=DARK_THEME["background"],
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            legend=dict(
+                orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
+            ),
         )
 
-        y_common = [get_stats(t).get("common_ancestor_depth", 0) for t in turns_int]
+        common_depths = [
+            get_stats(turn).get("common_ancestor_depth", 0) for turn in turns
+        ]
         fig_common = go.Figure(
             go.Scatter(
-                x=turns_int, y=y_common, mode="lines+markers", line=dict(color="#00bcd4")
+                x=turns,
+                y=common_depths,
+                mode="lines+markers",
+                line=dict(color="#00bcd4"),
             )
         )
         fig_common.update_layout(
@@ -972,8 +1050,8 @@ def create_app(generate_board_visual, history_path="history.json"):
         Input("turn-range-slider", "value"),
         Input("left-tabs", "value"),
     )
-    def update_all_graph(store_signal, turn_range, left_tab):
-        # 全体スコア推移タブを開いている時だけ作る。表示内容は同一。
+    def update_all_graph(_store_signal, turn_range, left_tab):
+        # 全体スコア推移タブを開いている時だけ図を作る
         if left_tab != "tab-all-graph":
             return dash.no_update
         processed = _DATA_CACHE.get("processed", {})
@@ -981,25 +1059,28 @@ def create_app(generate_board_visual, history_path="history.json"):
         if not nodes:
             return go.Figure()
 
-        inf = processed.get("current_data", {}).get("INF", 1e18)
-        min_t, max_t = turn_range
-        nodes_dict = processed.get("nodes_dict", {})
+        infinite_score = processed.get("current_data", {}).get("INF", 1e18)
+        min_turn, max_turn = turn_range
+        nodes_by_id = processed.get("nodes_dict", {})
 
         turn_min_all = processed.get("turn_min_all", {})
-        start_base_score = turn_min_all.get(min_t, nodes[0]["score"])
+        start_base_score = turn_min_all.get(min_turn, nodes[0]["score"])
 
         x, y = [], []
-        for n in nodes:
-            if not (min_t <= n["turn"] <= max_t) or n["score"] >= inf:
+        for node in nodes:
+            if (
+                not min_turn <= node["turn"] <= max_turn
+                or node["score"] >= infinite_score
+            ):
                 continue
 
-            pid = str(n["parent_id"])
-            if pid != "-1" and pid in nodes_dict:
-                x += [nodes_dict[pid]["turn"], n["turn"], None]
-                y += [nodes_dict[pid]["score"], n["score"], None]
-            elif pid == "-1":
-                x += [0, n["turn"], None]
-                y += [start_base_score, n["score"], None]
+            parent_id = str(node["parent_id"])
+            if parent_id != "-1" and parent_id in nodes_by_id:
+                x += [nodes_by_id[parent_id]["turn"], node["turn"], None]
+                y += [nodes_by_id[parent_id]["score"], node["score"], None]
+            elif parent_id == "-1":
+                x += [0, node["turn"], None]
+                y += [start_base_score, node["score"], None]
 
         fig = go.Figure(
             data=go.Scattergl(
@@ -1058,17 +1139,20 @@ def create_app(generate_board_visual, history_path="history.json"):
         [State("full-data-store", "data")],
     )
     def display_node(node_data, show_goal, clicked_child, info_tab, store_signal):
-        # 盤面とスコア図は該当タブを開いている時だけ作る。表示内容は同一。
-        # info-tabs の切替だけが要因なら詳細・操作列・スタイルシートは据え置く。
-        only_tab_switch = bool(callback_context.triggered) and callback_context.triggered[
-            0
-        ]["prop_id"].startswith("info-tabs")
+        # 盤面とスコア図は該当タブを開いている時だけ作る
+        # info-tabs の切替だけなら詳細、操作列、スタイルシートは更新しない
+        only_tab_switch = bool(
+            callback_context.triggered
+        ) and callback_context.triggered[0]["prop_id"].startswith("info-tabs")
         want_board = info_tab == "tab-state"
         want_score = info_tab == "tab-score"
         processed = _DATA_CACHE.get("processed", {})
         if not processed:
             return (
-                html.Div("ノードを選択してください", style={"color": "#aaa", "padding": "10px"}),
+                html.Div(
+                    "ノードを選択してください",
+                    style={"color": "#aaa", "padding": "10px"},
+                ),
                 "",
                 "",
                 go.Figure(),
@@ -1093,10 +1177,12 @@ def create_app(generate_board_visual, history_path="history.json"):
         fig = go.Figure()
         new_styles = list(BASE_STYLESHEET)
 
-        new_styles.append({
-            "selector": ".out-of-range",
-            "style": {"opacity": 0.4},
-        })
+        new_styles.append(
+            {
+                "selector": ".out-of-range",
+                "style": {"opacity": 0.4},
+            }
+        )
 
         if node_data:
             if node_data["id"] == "-1":
@@ -1161,37 +1247,43 @@ def create_app(generate_board_visual, history_path="history.json"):
                             ),
                             html.Div(
                                 btn_list,
-                                style={"display": "flex", "flexWrap": "wrap", "gap": "5px"},
+                                style={
+                                    "display": "flex",
+                                    "flexWrap": "wrap",
+                                    "gap": "5px",
+                                },
                             ),
                         ],
                     )
 
-                detail_elements = html.Div([
-                    html.Pre(
-                        detail_text,
-                        style={
-                            "whiteSpace": "pre-wrap",
-                            "backgroundColor": "#1e1e1e",
-                            "padding": "10px",
-                            "margin": "0",
-                            "border": f'1px solid {DARK_THEME["border"]}',
-                        },
-                    ),
-                    child_btns_container if child_btns_container else html.Div(),
-                ])
+                detail_elements = html.Div(
+                    [
+                        html.Pre(
+                            detail_text,
+                            style={
+                                "whiteSpace": "pre-wrap",
+                                "backgroundColor": "#1e1e1e",
+                                "padding": "10px",
+                                "margin": "0",
+                                "border": f'1px solid {DARK_THEME["border"]}',
+                            },
+                        ),
+                        child_btns_container if child_btns_container else html.Div(),
+                    ]
+                )
 
                 path_ids = []
-                curr = str(target["node_id"])
-                while curr != "-1" and curr in nodes_dict:
-                    path_ids.append(curr)
-                    curr = str(nodes_dict.get(curr, {}).get("parent_id", "-1"))
+                node_id = str(target["node_id"])
+                while node_id != "-1" and node_id in nodes_dict:
+                    path_ids.append(node_id)
+                    node_id = str(nodes_dict.get(node_id, {}).get("parent_id", "-1"))
                 path_ids.append("-1")
 
                 action_seq = "".join(
                     [
-                        nodes_dict[nid].get("action", "")
-                        for nid in path_ids[::-1]
-                        if nid in nodes_dict
+                        nodes_dict[node_id].get("action", "")
+                        for node_id in path_ids[::-1]
+                        if node_id in nodes_dict
                     ]
                 )
                 if want_board:
@@ -1216,10 +1308,14 @@ def create_app(generate_board_visual, history_path="history.json"):
 
                 if want_score:
                     path_scores = [
-                        nodes_dict[nid]["score"] for nid in path_ids if nid in nodes_dict
+                        nodes_dict[node_id]["score"]
+                        for node_id in path_ids
+                        if node_id in nodes_dict
                     ]
                     path_turns = [
-                        nodes_dict[nid]["turn"] for nid in path_ids if nid in nodes_dict
+                        nodes_dict[node_id]["turn"]
+                        for node_id in path_ids
+                        if node_id in nodes_dict
                     ]
                     path_thresholds = [
                         snapshots_dict[t]["threshold"] if t in snapshots_dict else None
@@ -1240,12 +1336,16 @@ def create_app(generate_board_visual, history_path="history.json"):
                     val_th_x = [
                         t
                         for t, th in zip(path_turns[::-1], path_thresholds[::-1])
-                        if th is not None and isinstance(th, (int, float)) and th < inf_value
+                        if th is not None
+                        and isinstance(th, (int, float))
+                        and th < inf_value
                     ]
                     val_th_y = [
                         th
                         for th in path_thresholds[::-1]
-                        if th is not None and isinstance(th, (int, float)) and th < inf_value
+                        if th is not None
+                        and isinstance(th, (int, float))
+                        and th < inf_value
                     ]
                     if val_th_x:
                         fig.add_trace(
@@ -1273,7 +1373,10 @@ def create_app(generate_board_visual, history_path="history.json"):
                     new_styles.append(
                         {
                             "selector": ",".join(
-                                [f'node[id="{nid}"]' for nid in subtree_node_ids]
+                                [
+                                    f'node[id="{node_id}"]'
+                                    for node_id in subtree_node_ids
+                                ]
                             ),
                             "style": {"border-width": "3px", "border-color": "#ff9800"},
                         }
@@ -1282,7 +1385,10 @@ def create_app(generate_board_visual, history_path="history.json"):
                     new_styles.append(
                         {
                             "selector": ",".join(
-                                [f'edge[id="{eid}"]' for eid in subtree_edge_ids]
+                                [
+                                    f'edge[id="{edge_id}"]'
+                                    for edge_id in subtree_edge_ids
+                                ]
                             ),
                             "style": {
                                 "width": 3,
@@ -1295,7 +1401,7 @@ def create_app(generate_board_visual, history_path="history.json"):
                     new_styles.append(
                         {
                             "selector": ",".join(
-                                [f'node[id="{nid}"]' for nid in path_ids]
+                                [f'node[id="{node_id}"]' for node_id in path_ids]
                             ),
                             "style": {
                                 "border-width": "3px",
@@ -1311,7 +1417,7 @@ def create_app(generate_board_visual, history_path="history.json"):
                     new_styles.append(
                         {
                             "selector": ",".join(
-                                [f'edge[id="{eid}"]' for eid in path_edges_ids]
+                                [f'edge[id="{edge_id}"]' for edge_id in path_edges_ids]
                             ),
                             "style": {
                                 "width": 4,
@@ -1347,7 +1453,7 @@ def create_app(generate_board_visual, history_path="history.json"):
                 new_styles.append(
                     {
                         "selector": ",".join(
-                            [f'node[id="{nid}"]' for nid in goal_path_ids]
+                            [f'node[id="{node_id}"]' for node_id in goal_path_ids]
                         ),
                         "style": {"border-width": "5px", "border-color": "#00e5ff"},
                     }
@@ -1356,7 +1462,7 @@ def create_app(generate_board_visual, history_path="history.json"):
                 new_styles.append(
                     {
                         "selector": ",".join(
-                            [f'edge[id="{eid}"]' for eid in goal_edge_ids]
+                            [f'edge[id="{edge_id}"]' for edge_id in goal_edge_ids]
                         ),
                         "style": {
                             "width": 6,
@@ -1385,17 +1491,26 @@ def create_app(generate_board_visual, history_path="history.json"):
         trigger = callback_context.triggered[0]["prop_id"]
         if "fold-all-pruned-button" in trigger:
             nodes = (
-                _DATA_CACHE.get("processed", {}).get("current_data", {}).get("nodes", [])
+                _DATA_CACHE.get("processed", {})
+                .get("current_data", {})
+                .get("nodes", [])
             )
             pruned_ids = [str(n["node_id"]) for n in nodes if n["status"] == 1]
             active_collapsed = [c for c in collapsed if c in pruned_ids]
             if active_collapsed:
                 collapsed = [c for c in collapsed if c not in pruned_ids]
             else:
-                collapsed.extend([pid for pid in pruned_ids if pid not in collapsed])
-        elif "toggle-fold-button" in trigger and tap_data and tap_data.get("id") != "-1":
-            nid = tap_data["id"]
-            collapsed.remove(nid) if nid in collapsed else collapsed.append(nid)
+                collapsed.extend(
+                    [node_id for node_id in pruned_ids if node_id not in collapsed]
+                )
+        elif (
+            "toggle-fold-button" in trigger and tap_data and tap_data.get("id") != "-1"
+        ):
+            node_id = tap_data["id"]
+            if node_id in collapsed:
+                collapsed.remove(node_id)
+            else:
+                collapsed.append(node_id)
         return collapsed
 
     @app.callback(
@@ -1410,19 +1525,19 @@ def create_app(generate_board_visual, history_path="history.json"):
     def manage_bookmarks(n_clicks, tap_data, bookmarks):
         btn_label = "⭐ ブックマークに追加"
         if tap_data and tap_data.get("id") != "-1":
-            nid = tap_data["id"]
-            if nid in bookmarks:
-                bookmarks.remove(nid)
+            node_id = tap_data["id"]
+            if node_id in bookmarks:
+                bookmarks.remove(node_id)
             else:
-                bookmarks.append(nid)
+                bookmarks.append(node_id)
                 btn_label = "⭐ ブックマークを解除"
 
         processed = _DATA_CACHE.get("processed", {})
         nodes_dict = processed.get("nodes_dict", {})
 
         elements = []
-        for bid in bookmarks:
-            node = nodes_dict.get(bid)
+        for bookmarked_id in bookmarks:
+            node = nodes_dict.get(bookmarked_id)
             if node:
                 elements.append(
                     html.Div(
@@ -1434,7 +1549,8 @@ def create_app(generate_board_visual, history_path="history.json"):
                         },
                         children=[
                             html.B(
-                                f"Node ID: {bid}", style={"color": DARK_THEME["bookmark"]}
+                                f"Node ID: {bookmarked_id}",
+                                style={"color": DARK_THEME["bookmark"]},
                             ),
                             html.P(
                                 f"Turn: {node['turn']} | Score: {node['score']}",

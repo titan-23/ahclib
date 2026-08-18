@@ -128,10 +128,10 @@ tab_selected_style = {
 }
 
 
-def generate_assets():
+def generate_assets() -> None:
     os.makedirs("assets", exist_ok=True)
-    with open("assets/beam_custom.css", "w", encoding="utf-8") as f:
-        f.write(
+    with open("assets/beam_custom.css", "w", encoding="utf-8") as css_file:
+        css_file.write(
             """
         html, body {
             margin: 0;
