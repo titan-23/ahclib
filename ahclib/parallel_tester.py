@@ -3,7 +3,7 @@ import argparse
 import collections
 import concurrent.futures
 from dataclasses import dataclass, field
-from logging import getLogger, basicConfig
+from logging import getLogger
 import subprocess
 import multiprocessing
 import time
@@ -21,6 +21,7 @@ import datetime
 import pandas as pd
 from .ahc_settings import AHCSettings
 from .ahc_util import to_green, to_red, to_bold, to_blue
+from .logging_util import configure_elapsed_logging
 
 logger = getLogger(__name__)
 
@@ -1047,11 +1048,7 @@ def run_test(
     record: bool = True,
     memo: Optional[str] = None,
 ) -> float:
-    basicConfig(
-        format="%(asctime)s [%(levelname)s] : %(message)s",
-        datefmt="%H:%M:%S",
-        level=os.getenv("LOG_LEVEL", "INFO"),
-    )
+    configure_elapsed_logging()
 
     njobs = max(1, min(njobs, multiprocessing.cpu_count() - 1))
 
@@ -1098,10 +1095,4 @@ def main():
 
 
 if __name__ == "__main__":
-    basicConfig(
-        format="%(asctime)s [%(levelname)s] : %(message)s",
-        datefmt="%H:%M:%S",
-        level=os.getenv("LOG_LEVEL", "INFO"),
-    )
-
     main()

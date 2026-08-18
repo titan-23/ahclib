@@ -5,7 +5,6 @@ import sys
 import importlib.util
 import argparse
 import shutil
-from logging import basicConfig
 import os
 import click
 
@@ -167,11 +166,6 @@ def main():
     settings = load_class_from_path(file_path, class_name)
 
     if args.command == "test":
-        basicConfig(
-            format="%(asctime)s [%(levelname)s] : %(message)s",
-            datefmt="%H:%M:%S",
-            level=os.getenv("LOG_LEVEL", "INFO"),
-        )
         run_test(
             settings,
             settings.njobs,

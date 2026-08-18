@@ -12,7 +12,7 @@ import sys
 import threading
 import time
 import warnings
-from logging import basicConfig, getLogger
+from logging import getLogger
 from typing import Callable, Optional
 
 import optuna
@@ -21,6 +21,7 @@ from optuna.storages.journal import JournalFileBackend, JournalFileOpenLock
 
 from .ahc_settings import AHCSettings
 from .ahc_util import to_blue, to_bold, to_green
+from .logging_util import configure_elapsed_logging
 from .parallel_tester import RESULTS_DIR, ParallelTester, build_tester
 
 logger = getLogger(__name__)
@@ -34,11 +35,7 @@ OPTIMIZER_SHUTDOWN_TIMEOUT_SEC = 10
 
 
 def _configure_logging() -> None:
-    basicConfig(
-        format="%(asctime)s [%(levelname)s] : %(message)s",
-        datefmt="%H:%M:%S",
-        level=os.getenv("LOG_LEVEL", "INFO"),
-    )
+    configure_elapsed_logging()
 
 
 def _optimizer_results_path() -> str:
