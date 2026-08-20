@@ -101,6 +101,73 @@ class CpuAffinityTest(unittest.TestCase):
             run.call_args.args[0],
             ["taskset", "--cpu-list", "7", "./a.out"],
         )
+        self.assertEqual(run.call_args.kwargs["stdout"], subprocess.PIPE)
+        self.assertEqual(run.call_args.kwargs["stderr"], subprocess.PIPE)
+
+    def test_execute_solver_discards_stdout_when_not_recording(self) -> None:
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout=None, stderr="Score = 10\n")
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            input_path = Path(temporary_dir) / "0000.txt"
+            input_path.write_text("input", encoding="utf-8")
+            with mock.patch.object(parallel_tester.subprocess, "run", return_value=completed) as run:
+                result = parallel_tester._execute_solver(
+                    str(input_path),
+                    ["./a.out"],
+                    None,
+                    True,
+                    capture_stdout=False,
+                )
+
+        self.assertEqual(result[0], "AC")
+        self.assertEqual(result[2], "")
+        self.assertEqual(run.call_args.kwargs["stdout"], subprocess.DEVNULL)
+        self.assertEqual(run.call_args.kwargs["stderr"], subprocess.PIPE)
+
+    def test_optuna_discards_stdout(self) -> None:
+        solver_result = ("AC", 10, "", "Score = 10\n", 0.1)
+        with mock.patch.object(parallel_tester, "_execute_solver", return_value=solver_result) as execute_solver:
+            score = parallel_tester._run_case_for_opt(
+                "0000.txt",
+                ["./a.out"],
+                None,
+                True,
+                False,
+                {},
+            )
+
+        self.assertEqual(score, 10)
+        self.assertFalse(execute_solver.call_args.kwargs["capture_stdout"])
+
+        with mock.patch.object(
+            parallel_tester,
+            "_execute_solver_cancellable",
+            return_value=solver_result,
+        ) as execute_solver_cancellable:
+            score = parallel_tester._run_case_for_opt(
+                "0000.txt",
+                ["./a.out"],
+                None,
+                True,
+                False,
+                {},
+                cancel_event=threading.Event(),
+            )
+
+        self.assertEqual(score, 10)
+        self.assertFalse(execute_solver_cancellable.call_args.kwargs["capture_stdout"])
+
+    def test_worker_discards_stdout_when_not_recording(self) -> None:
+        solver_result = ("AC", 10, "", "Score = 10\n", 0.1)
+        config = mock.Mock(command=["./a.out"], timeout=None, is_int=True, record=False)
+        expected = ("0000.txt", 10, 1.0, "AC", "0.100")
+        with (
+            mock.patch.object(parallel_tester, "_execute_solver", return_value=solver_result) as execute_solver,
+            mock.patch.object(parallel_tester, "_handle_ac_case", return_value=expected),
+        ):
+            result = parallel_tester._worker_process_file(("0000.txt", config, mock.sentinel.state, None, None))
+
+        self.assertEqual(result, expected)
+        self.assertFalse(execute_solver.call_args.kwargs["capture_stdout"])
 
     def test_parallel_map_keeps_one_case_per_cpu(self) -> None:
         tester = object.__new__(ParallelTester)

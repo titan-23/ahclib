@@ -149,6 +149,7 @@ def _execute_solver(
     is_int: bool,
     cpu_id: Optional[int] = None,
     cpu_lock: Optional[CpuLock] = None,
+    capture_stdout: bool = True,
 ) -> tuple[SolverState, Score, str, str, float]:
     """入力ファイルをソルバーへ渡し、状態・スコア・出力・実行時間を返す"""
     with open(input_file, "r", encoding="utf-8") as input_stream:
@@ -160,13 +161,14 @@ def _execute_solver(
                 _command_with_cpu_affinity(command, cpu_id),
                 input=input_text,
                 timeout=timeout,
-                capture_output=True,
+                stdout=subprocess.PIPE if capture_stdout else subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
                 text=True,
                 check=True,
             )
             elapsed = time.perf_counter() - start
         score = _extract_last_score(result.stderr, is_int)
-        return "AC", score, result.stdout, result.stderr, elapsed
+        return "AC", score, result.stdout or "", result.stderr, elapsed
     except subprocess.TimeoutExpired as e:
         elapsed = timeout if timeout is not None else -1.0
         return (
@@ -218,6 +220,7 @@ def _execute_solver_cancellable(
     cancel_event: threading.Event,
     cpu_id: Optional[int] = None,
     cpu_lock: Optional[CpuLock] = None,
+    capture_stdout: bool = True,
 ) -> Optional[tuple[SolverState, Score, str, str, float]]:
     """ソルバーを実行し、中止通知を受けた場合は終了して ``None`` を返す"""
     if cancel_event.is_set():
@@ -235,7 +238,7 @@ def _execute_solver_cancellable(
             process = subprocess.Popen(
                 _command_with_cpu_affinity(command, cpu_id),
                 stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.PIPE if capture_stdout else subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 text=True,
                 start_new_session=(os.name == "posix"),
@@ -447,7 +450,15 @@ def _run_case_for_opt(
 ) -> Optional[float]:
     """Optuna 用に 1 ケースを実行し、失敗時は nan を返す"""
     if cancel_event is None:
-        result = _execute_solver(input_file, command, timeout, is_int, cpu_id, cpu_lock)
+        result = _execute_solver(
+            input_file,
+            command,
+            timeout,
+            is_int,
+            cpu_id,
+            cpu_lock,
+            capture_stdout=False,
+        )
     else:
         result = _execute_solver_cancellable(
             input_file,
@@ -457,6 +468,7 @@ def _run_case_for_opt(
             cancel_event,
             cpu_id,
             cpu_lock,
+            capture_stdout=False,
         )
         if result is None:
             return None
@@ -666,6 +678,7 @@ def _worker_process_file(args) -> CaseResult:
         config.is_int,
         cpu_id,
         cpu_lock,
+        capture_stdout=config.record,
     )
     if solver_state == "AC":
         return _handle_ac_case(
