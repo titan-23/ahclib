@@ -16,7 +16,7 @@ class AHCSettings:
     # 並列テスト
     direction: str = "maximize"  # minimize / maximize
     njobs: int = 100
-    cpu_affinity: bool = False  # Linux / WSL でケースごとに logical CPU を固定する
+    cpu_affinity: bool = True  # Linux / WSL でケースごとに logical CPU を固定する
     timeout: Optional[int] = None
     is_int: bool = True  # 整数スコアなら True、小数スコアなら False
 
