@@ -1099,8 +1099,9 @@ class ParallelTester:
         )
         parser.add_argument(
             "--cpu-affinity",
-            action="store_true",
-            help="ケースごとに solver を同じ logical CPU へ割り当てる",
+            action=argparse.BooleanOptionalAction,
+            default=None,
+            help="ケースごとの CPU 固定を切り替える (未指定時は settings に従う)",
         )
         return parser.parse_args()
 
@@ -1275,13 +1276,14 @@ def main() -> None:
     """コマンドライン引数を読み、並列テストを実行する"""
     args = ParallelTester.get_args()
     njobs = min(AHCSettings.njobs, multiprocessing.cpu_count() - 1)
+    cpu_affinity = bool(getattr(AHCSettings, "cpu_affinity", False)) if args.cpu_affinity is None else args.cpu_affinity
     run_test(
         AHCSettings,
         njobs,
         args.verbose,
         args.compile,
         True,
-        cpu_affinity=args.cpu_affinity,
+        cpu_affinity=cpu_affinity,
     )
 
 

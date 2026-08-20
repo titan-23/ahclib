@@ -8,16 +8,30 @@ from pathlib import Path
 from unittest import mock
 
 from ahclib import parallel_tester
-from ahclib.main import get_args
+from ahclib.main import get_args, resolve_cpu_affinity
 from ahclib.parallel_tester import ParallelTester
 
 
 class CpuAffinityTest(unittest.TestCase):
     def test_cli_flag_is_optional_for_test_and_opt(self) -> None:
-        self.assertFalse(get_args(["test"]).cpu_affinity)
+        self.assertIsNone(get_args(["test"]).cpu_affinity)
         self.assertTrue(get_args(["test", "--cpu-affinity"]).cpu_affinity)
-        self.assertFalse(get_args(["opt"]).cpu_affinity)
+        self.assertFalse(get_args(["test", "--no-cpu-affinity"]).cpu_affinity)
+        self.assertIsNone(get_args(["opt"]).cpu_affinity)
         self.assertTrue(get_args(["opt", "--cpu-affinity"]).cpu_affinity)
+        self.assertFalse(get_args(["opt", "--no-cpu-affinity"]).cpu_affinity)
+
+    def test_settings_value_is_used_when_cli_flag_is_omitted(self) -> None:
+        class EnabledSettings:
+            cpu_affinity = True
+
+        class LegacySettings:
+            pass
+
+        self.assertTrue(resolve_cpu_affinity(None, EnabledSettings))
+        self.assertFalse(resolve_cpu_affinity(False, EnabledSettings))
+        self.assertTrue(resolve_cpu_affinity(True, LegacySettings))
+        self.assertFalse(resolve_cpu_affinity(None, LegacySettings))
 
     def test_cpu_selection_reserves_lowest_available_cpu(self) -> None:
         with (

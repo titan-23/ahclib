@@ -52,7 +52,7 @@ repository を clone したディレクトリで、使う機能に合わせて�
 
 .. code-block:: shell
 
-    python3 -m ahclib test [--no-compile] [--no-verbose] [--no-record] [--cpu-affinity] [-m MEMO]
+    python3 -m ahclib test [--no-compile] [--no-verbose] [--no-record] [--cpu-affinity | --no-cpu-affinity] [-m MEMO]
 
 **オプション**
 
@@ -61,11 +61,12 @@ repository を clone したディレクトリで、使う機能に合わせて�
 - ``--no-compile`` : コンパイルを行わない
 - ``--no-verbose`` : per-case のログを表示しない
 - ``--no-record`` : 標準出力と標準エラー出力を保存しない
-- ``--cpu-affinity`` : ケースごとに solver を同じ logical CPU へ割り当てる
+- ``--cpu-affinity``, ``--no-cpu-affinity`` : settings の CPU 固定を実行時だけ上書きする
 - ``-m``, ``--memo`` : 実行結果に添えるメモを指定する。結果ディレクトリの ``memo.txt`` に保存され ``vis`` で表示される
 - ``-s``, ``--settings`` : 設定ファイルのパスを指定する (既定は ``ahc_settings.py``)
 
-``--cpu-affinity`` は Linux と WSL で利用でき、``taskset`` が必要です
+CLI で指定しなければ ``AHCSettings.cpu_affinity`` に従い、設定が存在しない場合は ``False`` として扱います
+CPU 固定は Linux と WSL で利用でき、``taskset`` が必要です
 利用可能な CPU は ``sched_getaffinity`` から取得し、複数ある場合は最小 ID を solver 用から外します
 同じ ``input_file_names``、``njobs``、利用可能 CPU なら、各ケースは別 run でも同じ logical CPU へ割り当てられます
 
@@ -151,14 +152,14 @@ Optuna を用いたパラメータ探索
 
 .. code-block:: shell
 
-    python3 -m ahclib opt [--no-wilcoxon] [-a] [--cpu-affinity] [--tailscale]
+    python3 -m ahclib opt [--no-wilcoxon] [-a] [--cpu-affinity | --no-cpu-affinity] [--tailscale]
     python3 -m ahclib opt --vis [--tailscale]
 
 **オプション**
 
 - ``--no-wilcoxon`` : ``WilcoxonPruner`` を無効にする。既定では有効
 - ``-a``, ``--auto_sampler`` : ``auto_sampler`` を使う。指定しないときは ``TPESampler`` を使う
-- ``--cpu-affinity`` : ケースごとに solver を同じ logical CPU へ割り当てる
+- ``--cpu-affinity``, ``--no-cpu-affinity`` : settings の CPU 固定を実行時だけ上書きする
 - ``--vis`` : 最適化やコンパイルを行わず、保存済み study の Optuna Dashboard だけを起動する
 - ``--tailscale`` : Optuna Dashboard を Tailscale の tailnet 内だけに共有する
 
@@ -288,6 +289,11 @@ Tailscale Serveも同時に停止するため、共有設定は常駐しない�
 
   - (パソコンの最大スレッド数-1)との ``min`` がとられる
 
+* ケースごとの CPU 固定 (``cpu_affinity``)
+
+  - Linux / WSL で有効にする場合は ``True`` とする
+  - CLI の ``--cpu-affinity`` と ``--no-cpu-affinity`` で実行時だけ上書きできる
+
 * ファイル名 (``filename``)
 
 * コンパイルコマンド (``compile_command``)
@@ -333,6 +339,7 @@ Tailscale Serveも同時に停止するため、共有設定は常駐しない�
 .. code-block:: python
 
     njobs = 127
+    cpu_affinity = False
     filename = "./main.cpp"
     compile_command = "g++ ./main.cpp -O2 -std=c++20 -o a.out -I./../../../Library_cpp"
     execute_command = "./a.out"

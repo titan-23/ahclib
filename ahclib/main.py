@@ -41,6 +41,13 @@ def _port_number(value: str) -> int:
     return port
 
 
+def resolve_cpu_affinity(cli_value: Optional[bool], settings: Any) -> bool:
+    """CLI 指定を優先し、未指定なら settings の値を返す"""
+    if cli_value is not None:
+        return cli_value
+    return bool(getattr(settings, "cpu_affinity", False))
+
+
 def get_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -86,8 +93,9 @@ def get_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     test_parser.add_argument(
         "--cpu-affinity",
-        action="store_true",
-        help="ケースごとに solver を同じ logical CPU へ割り当てる",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="ケースごとの CPU 固定を切り替える (未指定時は settings に従う)",
     )
 
     beam_parser = subparsers.add_parser("vis_beam")
@@ -132,8 +140,9 @@ def get_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     opt_parser.add_argument(
         "--cpu-affinity",
-        action="store_true",
-        help="ケースごとに solver を同じ logical CPU へ割り当てる",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="ケースごとの CPU 固定を切り替える (未指定時は settings に従う)",
     )
     return parser.parse_args(argv)
 
@@ -201,6 +210,7 @@ def main() -> None:
     file_path = args.settings
     class_name = "AHCSettings"
     settings = load_class_from_path(file_path, class_name)
+    cpu_affinity = resolve_cpu_affinity(args.cpu_affinity, settings)
 
     if args.command == "test":
         from .parallel_tester import run_test
@@ -212,7 +222,7 @@ def main() -> None:
             args.compile,
             args.record,
             args.memo,
-            cpu_affinity=args.cpu_affinity,
+            cpu_affinity=cpu_affinity,
         )
     elif args.command == "opt":
         from .optimizer import run_optimizer
@@ -230,7 +240,7 @@ def main() -> None:
             sampler,
             pruner,
             tailscale=args.tailscale,
-            cpu_affinity=args.cpu_affinity,
+            cpu_affinity=cpu_affinity,
         )
     else:
         raise ValueError

@@ -48,7 +48,7 @@ Install and run Tailscale in the same Linux environment as ahclib. A Windows-hos
 
 For `WilcoxonPruner`, each case score is reported with its stable case ID as the step, while case order is shuffled per trial. When pruning is requested, running solver subprocesses are terminated cooperatively and the objective normally returns the aggregate of completed cases, as recommended for this pruner. If that partial estimate would update the study best, the trial raises `TrialPruned` instead so an incompletely evaluated trial cannot become best. The early-stop flag and evaluated case count are stored in trial user attributes.
 
-`--cpu-affinity` is available for `test` and `opt` on Linux/WSL with `taskset`. It uses the process affinity mask, reserves the lowest available logical CPU when possible, and assigns each stable case index to one CPU. Each CPU has a sequential queue, and parallel Optuna sessions share per-CPU locks within one optimizer run.
+`AHCSettings.cpu_affinity` controls CPU pinning when the CLI omits an override. `--cpu-affinity` and `--no-cpu-affinity` override the setting for `test` and `opt`. The feature runs on Linux/WSL with `taskset`, reserves the lowest available logical CPU when possible, and assigns each stable case index to one CPU. Each CPU has a sequential queue, and parallel Optuna sessions share per-CPU locks within one optimizer run. Settings files without `cpu_affinity` default to disabled.
 
 ### Launch dashboards
 
@@ -71,6 +71,7 @@ All per-contest settings live in the `AHCSettings` class:
 | Field | Purpose |
 |---|---|
 | `njobs` | Parallel worker count (capped at `cpu_count - 1`) |
+| `cpu_affinity` | Pin each case to a stable logical CPU on Linux/WSL |
 | `filename`, `compile_command`, `execute_command` | Build and run commands (`compile_command = None` skips compilation) |
 | `input_file_names` | List of test case paths, e.g. `[f"./in/{i:04d}.txt" for i in range(100)]` |
 | `timeout` | Per-case timeout in **ms** (`None` = no limit) |
