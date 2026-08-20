@@ -50,9 +50,7 @@ class CppExpander:
             output_fie_path: 出力先で ``clip`` ならクリップボードへコピーする
         """
         if not os.path.exists(input_file_path):
-            logger.critical(
-                to_red(f'input_file_path : "{input_file_path}" does not exist.')
-            )
+            logger.critical(to_red(f'input_file_path : "{input_file_path}" does not exist.'))
             logger.critical(to_red(f"FileNotFoundError"))
             exit(1)
         self.input_file_path: str = input_file_path
@@ -85,15 +83,11 @@ class CppExpander:
                         expanded_path = f"{lib_path}{target_file}"
                         if os.path.exists(expanded_path):
                             self.outputs.append(f"// {line}")
-                            logger.info(
-                                f"[include] \"{target_file.replace(lib_path, '')}\""
-                            )
+                            logger.info(f"[include] \"{target_file.replace(lib_path, '')}\"")
                             self._get_code(expanded_path)
                             break
                     else:
-                        logger.critical(
-                            f'File "{input_file_path}", line {input_line_num}'
-                        )
+                        logger.critical(f'File "{input_file_path}", line {input_line_num}')
                         error_line = line.rstrip()
                         error_underline = "^" + "~" * (len(error_line) - 1)
                         logger.critical(to_red(f"\t{error_line}"))

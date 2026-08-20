@@ -38,10 +38,7 @@ class _FakeProcess:
 class TailscaleServeTest(unittest.TestCase):
     def test_extract_private_url(self) -> None:
         self.assertEqual(
-            _extract_private_url(
-                "Available within your tailnet: "
-                "https://contest-pc.example-tailnet.ts.net"
-            ),
+            _extract_private_url("Available within your tailnet: " "https://contest-pc.example-tailnet.ts.net"),
             "https://contest-pc.example-tailnet.ts.net",
         )
         self.assertEqual(

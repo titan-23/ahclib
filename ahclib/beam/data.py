@@ -20,11 +20,7 @@ def _heatmap_color(
         return "rgb(128, 128, 128)"
     minimum_score = turn_summary["min"]
     maximum_score = turn_summary["max"]
-    ratio = (
-        0.5
-        if maximum_score == minimum_score
-        else (score - minimum_score) / (maximum_score - minimum_score)
-    )
+    ratio = 0.5 if maximum_score == minimum_score else (score - minimum_score) / (maximum_score - minimum_score)
     red = int(25 + ratio * 186)
     green = int(118 - ratio * 71)
     blue = int(210 - ratio * 163)
@@ -47,9 +43,7 @@ def compute_tree_layout(
     if mutate_children_order:
         effective_children = children_dict
     else:
-        effective_children = {
-            parent_id: list(child_ids) for parent_id, child_ids in children_dict.items()
-        }
+        effective_children = {parent_id: list(child_ids) for parent_id, child_ids in children_dict.items()}
 
     subtree_sizes: dict[str, int] = {}
     postorder_nodes: list[str] = []
@@ -58,9 +52,7 @@ def compute_tree_layout(
         node_id, processed = traversal_stack.pop()
         if processed:
             child_ids = effective_children.get(node_id, [])
-            subtree_sizes[node_id] = 1 + sum(
-                subtree_sizes.get(child_id, 1) for child_id in child_ids
-            )
+            subtree_sizes[node_id] = 1 + sum(subtree_sizes.get(child_id, 1) for child_id in child_ids)
             postorder_nodes.append(node_id)
         else:
             traversal_stack.append((node_id, True))
@@ -190,9 +182,7 @@ def compute_compact_layout(
 
     root_children = children_dict_full.get(root_id)
     if root_children:
-        filtered_children = [
-            child_id for child_id in root_children if child_id in active_set
-        ]
+        filtered_children = [child_id for child_id in root_children if child_id in active_set]
         if filtered_children:
             active_children[root_id] = filtered_children
 
@@ -200,9 +190,7 @@ def compute_compact_layout(
         child_ids = children_dict_full.get(parent_id)
         if not child_ids:
             continue
-        filtered_children = [
-            child_id for child_id in child_ids if child_id in active_set
-        ]
+        filtered_children = [child_id for child_id in child_ids if child_id in active_set]
         if filtered_children:
             active_children[parent_id] = filtered_children
 
@@ -269,8 +257,7 @@ def load_and_process_data(
                 active_nodes_by_turn[turn].append(i)
 
         snapshots = [
-            {"turn": turn, "active_node_ids": active_node_ids}
-            for turn, active_node_ids in active_nodes_by_turn.items()
+            {"turn": turn, "active_node_ids": active_node_ids} for turn, active_node_ids in active_nodes_by_turn.items()
         ]
 
         history_data = {
@@ -336,9 +323,7 @@ def load_and_process_data(
             if active_node_id in nodes_by_id:
                 parents.add(nodes_by_id[active_node_id]["parent_id"])
                 node_data = nodes_by_id[active_node_id]
-                if node_data["score"] < infinite_score and node_data.get(
-                    "status", 0
-                ) not in (1, 2):
+                if node_data["score"] < infinite_score and node_data.get("status", 0) not in (1, 2):
                     valid_active_ids.append(active_node_id)
 
         if turn in turn_statistics:
@@ -360,19 +345,14 @@ def load_and_process_data(
                     continue
                 common_length = 0
                 common_limit = min(len(common_path), len(path))
-                while (
-                    common_length < common_limit
-                    and common_path[common_length] == path[common_length]
-                ):
+                while common_length < common_limit and common_path[common_length] == path[common_length]:
                     common_length += 1
                 common_path = common_path[:common_length]
                 if len(common_path) <= 1:
                     break
 
             common_count = len(common_path) if common_path else 0
-            turn_statistics[turn]["common_ancestor_depth"] = (
-                max(0, common_count - 1) if valid_active_ids else 0
-            )
+            turn_statistics[turn]["common_ancestor_depth"] = max(0, common_count - 1) if valid_active_ids else 0
 
     for statistics in turn_statistics.values():
         turn_scores = statistics["scores"]
@@ -470,13 +450,7 @@ def load_and_process_data(
 
     max_turn = max((node["turn"] for node in nodes), default=1)
     node_turns = tuple(sorted(nodes_by_turn))
-    active_turns = tuple(
-        sorted(
-            turn
-            for turn, snapshot in snapshots_by_turn.items()
-            if snapshot.get("active")
-        )
-    )
+    active_turns = tuple(sorted(turn for turn, snapshot in snapshots_by_turn.items() if snapshot.get("active")))
 
     processed = {
         "current_data": history_data,

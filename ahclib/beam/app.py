@@ -25,12 +25,11 @@ def create_app(
     history_path: str = "history.json",
 ) -> dash.Dash:
     store = BeamStore(history_path, generate_board_visual)
+    textarea_border = f'1px solid {DARK_THEME["border"]}'
 
     cyto.load_extra_layouts()
 
-    assets_folder = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "assets"
-    )
+    assets_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets")
 
     app = dash.Dash(
         __name__,
@@ -409,17 +408,13 @@ def create_app(
                                                                 className="modern-btn",
                                                                 style={
                                                                     "marginLeft": "10px",
-                                                                    "backgroundColor": DARK_THEME[
-                                                                        "bookmark"
-                                                                    ],
+                                                                    "backgroundColor": DARK_THEME["bookmark"],
                                                                     "color": "#000",
                                                                 },
                                                             ),
                                                             html.Div(
                                                                 id="node-detail-output",
-                                                                style={
-                                                                    "marginTop": "15px"
-                                                                },
+                                                                style={"marginTop": "15px"},
                                                             ),
                                                             html.Label(
                                                                 "Action Path:",
@@ -430,9 +425,7 @@ def create_app(
                                                                 },
                                                             ),
                                                             html.Div(
-                                                                style={
-                                                                    "position": "relative"
-                                                                },
+                                                                style={"position": "relative"},
                                                                 children=[
                                                                     dcc.Textarea(
                                                                         id="action-path-output",
@@ -443,7 +436,7 @@ def create_app(
                                                                             "height": "80px",
                                                                             "backgroundColor": "#1e1e1e",
                                                                             "color": "#d4d4d4",
-                                                                            "border": f'1px solid {DARK_THEME["border"]}',
+                                                                            "border": textarea_border,
                                                                             "borderRadius": "4px",
                                                                             "fontFamily": "monospace",
                                                                             "padding": "8px",
@@ -489,9 +482,7 @@ def create_app(
                                                 children=[
                                                     dcc.Graph(
                                                         id="score-history-graph",
-                                                        config={
-                                                            "displayModeBar": False
-                                                        },
+                                                        config={"displayModeBar": False},
                                                         style={"marginTop": "15px"},
                                                     )
                                                 ],
@@ -540,11 +531,7 @@ def create_app(
             file_signature = (file_status.st_mtime_ns, file_status.st_size)
         except OSError:
             file_signature = None
-        if (
-            file_signature is not None
-            and store.file_signature == file_signature
-            and store.processed
-        ):
+        if file_signature is not None and store.file_signature == file_signature and store.processed:
             return {"ts": time.time()}, store.max_turn, None
         processed, max_turn, _ = load_and_process_data(store.history_path)
         store.replace(processed, max_turn, file_signature)
@@ -603,11 +590,7 @@ def create_app(
         if left_tab != "tab-tree":
             return dash.no_update, dash.no_update
 
-        trigger = (
-            callback_context.triggered[0]["prop_id"]
-            if callback_context.triggered
-            else ""
-        )
+        trigger = callback_context.triggered[0]["prop_id"] if callback_context.triggered else ""
         do_fit = trigger in ["fit-button.n_clicks", "full-data-store.data", ""]
 
         layout_config = {
@@ -673,9 +656,7 @@ def create_app(
             compact_cache_key = latest_active_turn
             compact_positions = store.compact_layout_cache.get(compact_cache_key)
             if compact_positions is None:
-                raw_positions = compute_compact_layout(
-                    active_path, children_dict, nodes_dict, root_id="-1"
-                )
+                raw_positions = compute_compact_layout(active_path, children_dict, nodes_dict, root_id="-1")
                 compact_positions = {}
                 for node_id, horizontal_position in raw_positions.items():
                     if node_id == "-1":
@@ -743,21 +724,14 @@ def create_app(
                     continue
                 visible_ids.add(node_id)
                 current_parent_id = node["spid"]
-                while (
-                    current_parent_id != "-1" and current_parent_id not in visible_ids
-                ):
-                    if (
-                        current_parent_id in nodes_dict
-                        and nodes_dict[current_parent_id]["turn"] < minimum_turn
-                    ):
+                while current_parent_id != "-1" and current_parent_id not in visible_ids:
+                    if current_parent_id in nodes_dict and nodes_dict[current_parent_id]["turn"] < minimum_turn:
                         visible_ids.add(current_parent_id)
                         current_parent_id = nodes_dict[current_parent_id]["spid"]
                     else:
                         break
 
-        visible_nodes = [
-            nodes_dict[node_id] for node_id in visible_ids if node_id in nodes_dict
-        ]
+        visible_nodes = [nodes_dict[node_id] for node_id in visible_ids if node_id in nodes_dict]
         visible_nodes.sort(
             key=lambda node: (
                 node["turn"],
@@ -889,9 +863,7 @@ def create_app(
                 x_box.append(turn)
                 y_box.append(score)
 
-        fig_score = go.Figure(
-            go.Box(x=x_box, y=y_box, name="Score", marker_color=DARK_THEME["accent"])
-        )
+        fig_score = go.Figure(go.Box(x=x_box, y=y_box, name="Score", marker_color=DARK_THEME["accent"]))
         fig_score.update_layout(
             title="ターンごとのスコア分布",
             template="plotly_dark",
@@ -901,9 +873,7 @@ def create_app(
         )
 
         parent_counts = [get_stats(turn).get("unique_parents", 0) for turn in turns]
-        fig_div = go.Figure(
-            go.Bar(x=turns, y=parent_counts, marker_color=DARK_THEME["bookmark"])
-        )
+        fig_div = go.Figure(go.Bar(x=turns, y=parent_counts, marker_color=DARK_THEME["bookmark"]))
         fig_div.update_layout(
             title="生存ノードの親の数",
             template="plotly_dark",
@@ -918,9 +888,7 @@ def create_app(
             valid_counts.append(
                 max(
                     0,
-                    stats.get("generated", 0)
-                    - stats.get("pruned", 0)
-                    - stats.get("invalid", 0),
+                    stats.get("generated", 0) - stats.get("pruned", 0) - stats.get("invalid", 0),
                 )
             )
             pruned_counts.append(stats.get("pruned", 0))
@@ -955,14 +923,10 @@ def create_app(
             margin=dict(l=20, r=20, t=40, b=20),
             paper_bgcolor=DARK_THEME["panel"],
             plot_bgcolor=DARK_THEME["background"],
-            legend=dict(
-                orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
-            ),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         )
 
-        common_depths = [
-            get_stats(turn).get("common_ancestor_depth", 0) for turn in turns
-        ]
+        common_depths = [get_stats(turn).get("common_ancestor_depth", 0) for turn in turns]
         fig_common = go.Figure(
             go.Scatter(
                 x=turns,
@@ -1122,9 +1086,9 @@ def create_app(
     def display_node(node_data, show_goal, clicked_child, info_tab, store_signal):
         # 盤面とスコア図は該当タブを開いている時だけ作る
         # info-tabs の切替だけなら詳細、操作列、スタイルシートは更新しない
-        only_tab_switch = bool(
-            callback_context.triggered
-        ) and callback_context.triggered[0]["prop_id"].startswith("info-tabs")
+        only_tab_switch = bool(callback_context.triggered) and callback_context.triggered[0]["prop_id"].startswith(
+            "info-tabs"
+        )
         want_board = info_tab == "tab-state"
         want_score = info_tab == "tab-score"
         processed = store.processed
@@ -1148,13 +1112,9 @@ def create_app(
 
         y_range = processed.get("y_range")
 
-        detail_elements = html.Div(
-            "ノードを選択してください", style={"color": "#aaa", "padding": "10px"}
-        )
+        detail_elements = html.Div("ノードを選択してください", style={"color": "#aaa", "padding": "10px"})
         action_seq = ""
-        state_visual = html.Div(
-            "ノードを選択してください", style={"color": "#aaa", "padding": "10px"}
-        )
+        state_visual = html.Div("ノードを選択してください", style={"color": "#aaa", "padding": "10px"})
         fig = go.Figure()
         new_styles = list(BASE_STYLESHEET)
 
@@ -1266,19 +1226,10 @@ def create_app(
                 subtree_data = None if only_tab_switch else store.subtree(target_id)
 
                 if want_score:
-                    path_scores = [
-                        nodes_dict[node_id]["score"]
-                        for node_id in path_ids
-                        if node_id in nodes_dict
-                    ]
-                    path_turns = [
-                        nodes_dict[node_id]["turn"]
-                        for node_id in path_ids
-                        if node_id in nodes_dict
-                    ]
+                    path_scores = [nodes_dict[node_id]["score"] for node_id in path_ids if node_id in nodes_dict]
+                    path_turns = [nodes_dict[node_id]["turn"] for node_id in path_ids if node_id in nodes_dict]
                     path_thresholds = [
-                        snapshots_dict[t]["threshold"] if t in snapshots_dict else None
-                        for t in path_turns
+                        snapshots_dict[t]["threshold"] if t in snapshots_dict else None for t in path_turns
                     ]
 
                     if path_turns:
@@ -1295,16 +1246,12 @@ def create_app(
                     val_th_x = [
                         t
                         for t, th in zip(path_turns[::-1], path_thresholds[::-1])
-                        if th is not None
-                        and isinstance(th, (int, float))
-                        and th < inf_value
+                        if th is not None and isinstance(th, (int, float)) and th < inf_value
                     ]
                     val_th_y = [
                         th
                         for th in path_thresholds[::-1]
-                        if th is not None
-                        and isinstance(th, (int, float))
-                        and th < inf_value
+                        if th is not None and isinstance(th, (int, float)) and th < inf_value
                     ]
                     if val_th_x:
                         fig.add_trace(
@@ -1435,12 +1382,8 @@ def create_app(
                 collapsed = [c for c in collapsed if c not in pruned_set]
             else:
                 collapsed_set = set(collapsed)
-                collapsed.extend(
-                    [node_id for node_id in pruned_ids if node_id not in collapsed_set]
-                )
-        elif (
-            "toggle-fold-button" in trigger and tap_data and tap_data.get("id") != "-1"
-        ):
+                collapsed.extend([node_id for node_id in pruned_ids if node_id not in collapsed_set])
+        elif "toggle-fold-button" in trigger and tap_data and tap_data.get("id") != "-1":
             node_id = tap_data["id"]
             if node_id in collapsed:
                 collapsed.remove(node_id)
@@ -1501,11 +1444,7 @@ def create_app(
 
         return (
             bookmarks,
-            (
-                elements
-                if elements
-                else html.Div("ブックマークはありません", style={"color": "#aaa"})
-            ),
+            (elements if elements else html.Div("ブックマークはありません", style={"color": "#aaa"})),
             btn_label,
         )
 
@@ -1514,11 +1453,7 @@ def create_app(
         Input("cytoscape-tree", "mouseoverEdgeData"),
     )
     def display_hover_edge(edge_data):
-        return (
-            f"Action: {edge_data['action']}"
-            if edge_data and "action" in edge_data
-            else ""
-        )
+        return f"Action: {edge_data['action']}" if edge_data and "action" in edge_data else ""
 
     @app.callback(
         Output("right-panel-container", "className"),

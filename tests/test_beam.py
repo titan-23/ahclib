@@ -89,8 +89,7 @@ class BeamAppTest(unittest.TestCase):
     def _callbacks(self):
         app = create_app(generate_board_visual, self.history_path)
         callbacks = {
-            item["callback"].__wrapped__.__name__: item["callback"].__wrapped__
-            for item in app.callback_map.values()
+            item["callback"].__wrapped__.__name__: item["callback"].__wrapped__ for item in app.callback_map.values()
         }
         callbacks["load_data"](0, "")
         return app, callbacks
@@ -104,10 +103,7 @@ class BeamAppTest(unittest.TestCase):
         self.assertEqual(processed["active_turns"], (1, 2, 3))
         self.assertEqual(processed["pruned_ids"], ("1", "3"))
         self.assertEqual(
-            [
-                [node["sid"] for node in processed["nodes_by_turn"][turn]]
-                for turn in (1, 2, 3)
-            ],
+            [[node["sid"] for node in processed["nodes_by_turn"][turn]] for turn in (1, 2, 3)],
             [["0", "1"], ["2", "3"], ["4"]],
         )
 

@@ -52,7 +52,7 @@ repository を clone したディレクトリで、使う機能に合わせて�
 
 .. code-block:: shell
 
-    python3 -m ahclib test [--no-compile] [--no-verbose] [--no-record] [-m MEMO]
+    python3 -m ahclib test [--no-compile] [--no-verbose] [--no-record] [--cpu-affinity] [-m MEMO]
 
 **オプション**
 
@@ -61,8 +61,13 @@ repository を clone したディレクトリで、使う機能に合わせて�
 - ``--no-compile`` : コンパイルを行わない
 - ``--no-verbose`` : per-case のログを表示しない
 - ``--no-record`` : 標準出力と標準エラー出力を保存しない
+- ``--cpu-affinity`` : ケースごとに solver を同じ logical CPU へ割り当てる
 - ``-m``, ``--memo`` : 実行結果に添えるメモを指定する。結果ディレクトリの ``memo.txt`` に保存され ``vis`` で表示される
 - ``-s``, ``--settings`` : 設定ファイルのパスを指定する (既定は ``ahc_settings.py``)
+
+``--cpu-affinity`` は Linux と WSL で利用でき、``taskset`` が必要です
+利用可能な CPU は ``sched_getaffinity`` から取得し、複数ある場合は最小 ID を solver 用から外します
+同じ ``input_file_names``、``njobs``、利用可能 CPU なら、各ケースは別 run でも同じ logical CPU へ割り当てられます
 
 
 実行結果の可視化
@@ -85,14 +90,12 @@ repository を clone したディレクトリで、使う機能に合わせて�
 - 改善、悪化、同点、比較不能、失敗、Bookmark でケースを絞り込める
 - Target と Base の State、score、rank、time とそれぞれの差分を表示する
 - Score、Rank、Time、Best、入力パラメータの列グループを表示切り替えできる
-- ``Zoom reset`` でグラフの表示範囲を戻せる
 - グラフ種別、列表示、列 filter と並べ替えは browser session に保存される
 - Base は手動選択、``直前を Base``、Target の直前へ自動追従から選べる
 
 実行一覧には次の集計値を表示します
 
 - ``Total`` は現在の ``AHCSettings.get_score`` で計算した総合値
-- ``Ave`` は算術平均
 - ``Median`` は中央値
 - ``IQR`` は四分位範囲
 - ``CI95 ±`` は算術平均の 95% 信頼区間の半幅 (正規近似)
@@ -115,7 +118,7 @@ repository を clone したディレクトリで、使う機能に合わせて�
 
 この例では詳細結果へ ``N`` と ``M`` の列が追加されます
 
-実行一覧の Tag と Favorite、ケースごとの Memo と Bookmark は結果 run 内の
+実行一覧の Tag、ケースごとの Memo と Bookmark は結果 run 内の
 ``.ahclib_vis.json`` へ保存します
 既存の ``result.csv``、入力、出力は変更しません
 
@@ -136,7 +139,7 @@ iframe には ``sandbox`` と Content Security Policy を設定しており、�
 
 ``--tailscale`` では ``127.0.0.1:8050`` を Tailscale Serve へ接続し、tailnet 内だけに共有します
 Funnel と ``0.0.0.0`` は使用しません
-共有中の画面は読み取り専用になり、削除、Memo、Tag、Favorite、Bookmark の変更は
+共有中の画面は読み取り専用になり、削除、Memo、Tag、Bookmark の変更は
 画面とサーバーの両方で無効になります
 port を変える場合は ``--port 8051`` のように指定します
 
@@ -148,13 +151,14 @@ Optuna を用いたパラメータ探索
 
 .. code-block:: shell
 
-    python3 -m ahclib opt [--no-wilcoxon] [-a] [--tailscale]
+    python3 -m ahclib opt [--no-wilcoxon] [-a] [--cpu-affinity] [--tailscale]
     python3 -m ahclib opt --vis [--tailscale]
 
 **オプション**
 
 - ``--no-wilcoxon`` : ``WilcoxonPruner`` を無効にする。既定では有効
 - ``-a``, ``--auto_sampler`` : ``auto_sampler`` を使う。指定しないときは ``TPESampler`` を使う
+- ``--cpu-affinity`` : ケースごとに solver を同じ logical CPU へ割り当てる
 - ``--vis`` : 最適化やコンパイルを行わず、保存済み study の Optuna Dashboard だけを起動する
 - ``--tailscale`` : Optuna Dashboard を Tailscale の tailnet 内だけに共有する
 

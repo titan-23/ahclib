@@ -24,6 +24,7 @@ python3 -m ahclib test             # compile + run all test cases in parallel
 python3 -m ahclib test --no-compile  # skip recompilation
 python3 -m ahclib test --no-verbose  # suppress per-case logging
 python3 -m ahclib test --no-record   # don't save per-case stdout/stderr to disk
+python3 -m ahclib test --cpu-affinity  # pin each case to a stable logical CPU
 python3 -m ahclib test -m "memo"     # attach a memo (saved to memo.txt, shown in vis)
 ```
 
@@ -37,6 +38,7 @@ python3 -m ahclib opt --no-wilcoxon  # disable pruner
 python3 -m ahclib opt -a           # enable auto_sampler
 python3 -m ahclib opt --vis        # launch only the Optuna dashboard
 python3 -m ahclib opt --tailscale  # privately share dashboard within the tailnet
+python3 -m ahclib opt --cpu-affinity  # pin each case to a stable logical CPU
 ```
 
 All Optuna studies share the local JournalStorage file `./ahclib_results/optimizer_results/optuna-journal.log`, so the dashboard lists every study. `njobs_optuna` controls independent optimizer processes; each process opens its own study/storage session and calls `study.optimize(..., n_jobs=1)`, while the configured total `n_trials` is split across them. Journal writes use `JournalFileOpenLock` for `/mnt/c` compatibility. `Ctrl-C` cooperatively stops solver/session processes and records active trials as `FAIL`; worker-tagged orphan `RUNNING` trials are recovered on the next run. Legacy studies in local `ahclib_optuna_*` PostgreSQL databases are copied into the journal non-destructively when found. The `./ahclib_results/optimizer_results/<study_name>/` directory holds the latest `result.txt`, `trials.csv`, `study.json`, plots, and source/settings snapshots; `runs/<timestamp>/` archives each optimizer run. An `optuna-dashboard` process is launched automatically and its URL is logged.
@@ -45,6 +47,8 @@ All Optuna studies share the local JournalStorage file `./ahclib_results/optimiz
 Install and run Tailscale in the same Linux environment as ahclib. A Windows-host installation does not provide the `tailscale` command inside WSL; WSL and a separate Ubuntu/Linux PC each need their own Tailscale installation and tailnet device.
 
 For `WilcoxonPruner`, each case score is reported with its stable case ID as the step, while case order is shuffled per trial. When pruning is requested, running solver subprocesses are terminated cooperatively and the objective normally returns the aggregate of completed cases, as recommended for this pruner. If that partial estimate would update the study best, the trial raises `TrialPruned` instead so an incompletely evaluated trial cannot become best. The early-stop flag and evaluated case count are stored in trial user attributes.
+
+`--cpu-affinity` is available for `test` and `opt` on Linux/WSL with `taskset`. It uses the process affinity mask, reserves the lowest available logical CPU when possible, and assigns each stable case index to one CPU. Each CPU has a sequential queue, and parallel Optuna sessions share per-CPU locks within one optimizer run.
 
 ### Launch dashboards
 

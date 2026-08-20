@@ -84,6 +84,11 @@ def get_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default=None,
         help="test の実行結果に添えるメモ (結果ディレクトリの memo.txt に保存され vis に表示される)",
     )
+    test_parser.add_argument(
+        "--cpu-affinity",
+        action="store_true",
+        help="ケースごとに solver を同じ logical CPU へ割り当てる",
+    )
 
     beam_parser = subparsers.add_parser("vis_beam")
     beam_parser.add_argument(
@@ -125,6 +130,11 @@ def get_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default=False,
         action="store_true",
     )
+    opt_parser.add_argument(
+        "--cpu-affinity",
+        action="store_true",
+        help="ケースごとに solver を同じ logical CPU へ割り当てる",
+    )
     return parser.parse_args(argv)
 
 
@@ -144,9 +154,7 @@ def main() -> None:
         visualizer_path = args.visualizer or os.path.join(os.getcwd(), "visualizer.py")
         if os.path.exists(visualizer_path):
             visualizer_module = load_class_from_path(visualizer_path)
-            generate_board_visual = getattr(
-                visualizer_module, "generate_board_visual", _default_vis
-            )
+            generate_board_visual = getattr(visualizer_module, "generate_board_visual", _default_vis)
         else:
             generate_board_visual = _default_vis
 
@@ -204,6 +212,7 @@ def main() -> None:
             args.compile,
             args.record,
             args.memo,
+            cpu_affinity=args.cpu_affinity,
         )
     elif args.command == "opt":
         from .optimizer import run_optimizer
@@ -214,10 +223,14 @@ def main() -> None:
             print(to_bold(to_blue("wilcoxon option has been set.")), file=sys.stderr)
             pruner = "WilcoxonPruner"
         if args.auto_sampler:
-            print(
-                to_bold(to_blue("auto_sampler option has been set.")), file=sys.stderr
-            )
+            print(to_bold(to_blue("auto_sampler option has been set.")), file=sys.stderr)
             sampler = "auto_sampler"
-        run_optimizer(settings, sampler, pruner, tailscale=args.tailscale)
+        run_optimizer(
+            settings,
+            sampler,
+            pruner,
+            tailscale=args.tailscale,
+            cpu_affinity=args.cpu_affinity,
+        )
     else:
         raise ValueError

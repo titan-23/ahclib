@@ -21,8 +21,7 @@ class AHCSettings:
 
     filename: str = "./main.cpp"
     compile_command: Optional[str] = (
-        f"g++ {filename} -O2 -DLOCAL -std=c++20 -o a.out "
-        "-fopenmp -I. -I./../../Library_cpp -march=native"
+        f"g++ {filename} -O2 -DLOCAL -std=c++20 -o a.out " "-fopenmp -I. -I./../../Library_cpp -march=native"
     )
     execute_command: str = "./a.out"
     input_file_names: list[str] = [f"./in/{str(i).zfill(4)}.txt" for i in range(100)]

@@ -77,3 +77,6 @@ namespaces = false
 
 [tool.setuptools.package-data]
 ahclib = ["assets/*"]
+
+[tool.black]
+line-length = 120

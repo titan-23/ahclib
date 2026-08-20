@@ -22,7 +22,12 @@ from optuna.storages.journal import JournalFileBackend, JournalFileOpenLock
 from .ahc_settings import AHCSettings
 from .ahc_util import to_blue, to_bold, to_green
 from .logging_util import configure_elapsed_logging
-from .parallel_tester import RESULTS_DIR, ParallelTester, build_tester
+from .parallel_tester import (
+    RESULTS_DIR,
+    ParallelTester,
+    build_tester,
+    get_cpu_affinity_ids,
+)
 from .tailscale_serve import TailscaleServe
 
 logger = getLogger(__name__)
@@ -181,8 +186,7 @@ def _recover_orphaned_trials(study: optuna.Study) -> None:
         )
     if unknown_numbers:
         logger.warning(
-            "RUNNING trials without verifiable ahclib worker metadata were left "
-            "unchanged: %s",
+            "RUNNING trials without verifiable ahclib worker metadata were left " "unchanged: %s",
             ", ".join(map(str, unknown_numbers)),
         )
 
@@ -212,17 +216,12 @@ def _migrate_legacy_postgres_studies(
                 )
                 legacy_database_names = [row[0] for row in cursor.fetchall()]
         except psycopg2.Error:
-            logger.debug(
-                "Legacy PostgreSQL databases cannot be listed; skipping migration."
-            )
+            logger.debug("Legacy PostgreSQL databases cannot be listed; skipping migration.")
             return
     finally:
         connection.close()
 
-    existing_names = {
-        summary.study_name
-        for summary in optuna.get_all_study_summaries(storage=target_storage)
-    }
+    existing_names = {summary.study_name for summary in optuna.get_all_study_summaries(storage=target_storage)}
     for database_name in legacy_database_names:
         legacy_url = f"postgresql+psycopg2:///{database_name}"
         try:
@@ -240,15 +239,10 @@ def _migrate_legacy_postgres_studies(
                     to_storage=target_storage,
                 )
             except Exception as error:
-                logger.warning(
-                    f"Failed to migrate study {summary.study_name} "
-                    f"from {database_name}: {error}"
-                )
+                logger.warning(f"Failed to migrate study {summary.study_name} " f"from {database_name}: {error}")
                 continue
             existing_names.add(summary.study_name)
-            logger.info(
-                f"Migrated legacy study {summary.study_name} " f"from {database_name}."
-            )
+            logger.info(f"Migrated legacy study {summary.study_name} " f"from {database_name}.")
 
 
 def _start_dashboard() -> subprocess.Popen[str]:
@@ -317,8 +311,7 @@ def _start_dashboard() -> subprocess.Popen[str]:
             raise RuntimeError(f"Optuna Dashboard failed to start: {recent_output}")
         else:
             logger.warning(
-                "Dashboard startup could not be confirmed within %s seconds; "
-                "continuing with expected URL: %s",
+                "Dashboard startup could not be confirmed within %s seconds; " "continuing with expected URL: %s",
                 DASHBOARD_STARTUP_TIMEOUT_SEC,
                 DEFAULT_DASHBOARD_URL,
             )
@@ -335,9 +328,7 @@ def _stop_optimizer_processes(
 ) -> None:
     """子プロセスの正常終了を待ち、残ったものだけを強制終了する"""
     # Process.start() が失敗した未起動プロセスには join() を呼べない
-    started_processes = [
-        process for process in optimizer_processes if process.pid is not None
-    ]
+    started_processes = [process for process in optimizer_processes if process.pid is not None]
     alive_processes = [process for process in started_processes if process.is_alive()]
     for optimizer_process in alive_processes:
         # 子側で SIGTERM を KeyboardInterrupt に変換し
@@ -420,8 +411,9 @@ def run_optimizer_dashboard(tailscale: bool = False) -> None:
 
 
 class Optimizer:
-    def __init__(self, settings: AHCSettings) -> None:
+    def __init__(self, settings: AHCSettings, cpu_affinity: bool = False) -> None:
         self.settings: AHCSettings = settings
+        self.cpu_affinity = cpu_affinity
         self.study_name = settings.study_name
         self.path = _optimizer_results_path()
 
@@ -450,16 +442,18 @@ class Optimizer:
         pruner: Optional[str] = None,
         tailscale: bool = False,
     ) -> None:
+        affinity_cpu_ids = get_cpu_affinity_ids(self.settings.njobs) if self.cpu_affinity else ()
+        cpu_locks: Optional[dict[int, Any]] = None
         logger.info("==============================================")
         logger.info(to_bold(to_blue("Optimizer settings:")))
         logger.info(f"- study_name    : {to_bold(self.settings.study_name)}")
         logger.info(f"- direction     : {to_bold(self.settings.direction)}")
         logger.info(f"- n_trials      : {to_bold(self.settings.n_trials)}")
         optuna_timeout_min = self.settings.optuna_timeout
-        optuna_timeout = (
-            optuna_timeout_min * 60 if optuna_timeout_min is not None else None
-        )
+        optuna_timeout = optuna_timeout_min * 60 if optuna_timeout_min is not None else None
         logger.info(f"- timeout [min] : {to_bold(optuna_timeout_min)}")
+        cpu_affinity_text = ", ".join(map(str, affinity_cpu_ids)) if affinity_cpu_ids else "disabled"
+        logger.info(f"- CPU affinity  : {to_bold(cpu_affinity_text)}")
 
         started_at = datetime.datetime.now().astimezone()
         start_time = time.time()
@@ -470,6 +464,9 @@ class Optimizer:
                 self.settings,
                 njobs=self.settings.njobs,
                 verbose=False,
+                cpu_affinity=self.cpu_affinity,
+                affinity_cpu_ids=affinity_cpu_ids,
+                cpu_locks=cpu_locks,
             )
             execute_args = self._as_execute_args(self.settings.objective(trial))
             trial.set_user_attr(
@@ -488,6 +485,9 @@ class Optimizer:
                 self.settings,
                 njobs=self.settings.njobs,
                 verbose=False,
+                cpu_affinity=self.cpu_affinity,
+                affinity_cpu_ids=affinity_cpu_ids,
+                cpu_locks=cpu_locks,
             )
             execute_args = self._as_execute_args(self.settings.objective(trial))
             trial.set_user_attr(
@@ -496,9 +496,7 @@ class Optimizer:
             )
             tester.append_execute_command(execute_args)
             pruning_result = tester.run_opt_pruner(trial)
-            completed_scores = [
-                score for score in pruning_result.scores if score is not None
-            ]
+            completed_scores = [score for score in pruning_result.scores if score is not None]
             trial.set_user_attr(
                 "ahclib_evaluated_cases",
                 pruning_result.completed_count,
@@ -522,9 +520,7 @@ class Optimizer:
                     )
                 )
                 if _would_update_best(trial.study, score):
-                    raise optuna.TrialPruned(
-                        "Wilcoxon-stopped estimate would update the best value."
-                    )
+                    raise optuna.TrialPruned("Wilcoxon-stopped estimate would update the best value.")
             return score
 
         storage = _build_storage()
@@ -644,16 +640,19 @@ class Optimizer:
                 self.settings,
                 njobs=self.settings.njobs,
                 verbose=False,
+                cpu_affinity=self.cpu_affinity,
+                affinity_cpu_ids=affinity_cpu_ids,
             )
             tester.compile()
 
             if len(trials_per_worker) > 1:
                 if "fork" not in multiprocessing.get_all_start_methods():
                     raise RuntimeError(
-                        "Multi-session optimization requires the multiprocessing "
-                        "'fork' start method."
+                        "Multi-session optimization requires the multiprocessing " "'fork' start method."
                     )
                 multiprocessing_context = multiprocessing.get_context("fork")
+                if affinity_cpu_ids:
+                    cpu_locks = {cpu_id: multiprocessing_context.Lock() for cpu_id in affinity_cpu_ids}
                 optimizer_processes = [
                     multiprocessing_context.Process(
                         target=_run_optimization_session,
@@ -677,14 +676,11 @@ class Optimizer:
                 for optimizer_process in optimizer_processes:
                     optimizer_process.join()
                 failed_processes = [
-                    optimizer_process
-                    for optimizer_process in optimizer_processes
-                    if optimizer_process.exitcode != 0
+                    optimizer_process for optimizer_process in optimizer_processes if optimizer_process.exitcode != 0
                 ]
                 if failed_processes:
                     failure_details = ", ".join(
-                        f"{process.name} (exit={process.exitcode})"
-                        for process in failed_processes
+                        f"{process.name} (exit={process.exitcode})" for process in failed_processes
                     )
                     raise RuntimeError(f"Optimizer session failed: {failure_details}")
 
@@ -713,12 +709,11 @@ class Optimizer:
                     "requested_n_trials": self.settings.n_trials,
                     "trials_before_run": initial_trial_count,
                     "trials_after_run": len(study.trials),
+                    "cpu_affinity": self.cpu_affinity,
+                    "cpu_ids": list(affinity_cpu_ids),
                 },
             )
-            logger.info(
-                f"Finish parameter searching. Time: "
-                f"{time.time() - start_time:.2f}sec."
-            )
+            logger.info(f"Finish parameter searching. Time: " f"{time.time() - start_time:.2f}sec.")
             _wait_for_dashboard_close()
 
         except KeyboardInterrupt:
@@ -798,9 +793,7 @@ class Optimizer:
             else:
                 print(best_trial, file=result_file)
 
-        study.trials_dataframe().to_csv(
-            os.path.join(study_path, "trials.csv"), index=False
-        )
+        study.trials_dataframe().to_csv(os.path.join(study_path, "trials.csv"), index=False)
         trial_counts: dict[str, int] = {}
         for trial in study.trials:
             state = trial.state.name
@@ -861,9 +854,10 @@ def run_optimizer(
     sampler: Optional[str] = None,
     pruner: Optional[str] = None,
     tailscale: bool = False,
+    cpu_affinity: bool = False,
 ) -> None:
     _configure_logging()
-    optimizer = Optimizer(settings)
+    optimizer = Optimizer(settings, cpu_affinity=cpu_affinity)
     try:
         optimizer.optimize(sampler, pruner, tailscale=tailscale)
     except KeyboardInterrupt:

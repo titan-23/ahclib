@@ -122,11 +122,7 @@ def _code_panel(
                     children=[
                         dcc.Clipboard(content=shown, className="clipboard-btn"),
                         html.Pre(
-                            (
-                                _highlighted_diff(shown, search)
-                                if colorize_diff
-                                else _highlighted_text(shown, search)
-                            ),
+                            (_highlighted_diff(shown, search) if colorize_diff else _highlighted_text(shown, search)),
                             className="code-textarea",
                             style={
                                 "margin": "0",

@@ -124,24 +124,16 @@ def register_callbacks(app: Dash, store: ResultStore) -> None:
         current_y,
     ):
         metadata = store.snapshot().metadata
-        parameter_columns = [
-            column for column in metadata.columns if column != "test_id"
-        ]
+        parameter_columns = [column for column in metadata.columns if column != "test_id"]
         if not parameter_columns:
             return [], None, [], None
 
         options = [{"label": column, "value": column} for column in parameter_columns]
-        selected_x = (
-            current_x if current_x in parameter_columns else parameter_columns[0]
-        )
+        selected_x = current_x if current_x in parameter_columns else parameter_columns[0]
         selected_y = (
             current_y
             if current_y in parameter_columns
-            else (
-                parameter_columns[1]
-                if len(parameter_columns) > 1
-                else parameter_columns[0]
-            )
+            else (parameter_columns[1] if len(parameter_columns) > 1 else parameter_columns[0])
         )
         return options, selected_x, options, selected_y
 
@@ -169,14 +161,10 @@ def register_callbacks(app: Dash, store: ResultStore) -> None:
                 "clicked_at": clicked_cell.get("timestamp"),
             }
         use_previous = ctx.triggered_id == "previous-base" or (
-            ctx.triggered_id in ("target-ts-store", "base-mode-check")
-            and base_mode
-            and "previous" in base_mode
+            ctx.triggered_id in ("target-ts-store", "base-mode-check") and base_mode and "previous" in base_mode
         )
         if use_previous and target_timestamp:
-            timestamps = sorted(
-                store.snapshot().results["timestamp"].dropna().astype(str).unique()
-            )
+            timestamps = sorted(store.snapshot().results["timestamp"].dropna().astype(str).unique())
             if target_timestamp in timestamps:
                 index = timestamps.index(target_timestamp)
                 return {"timestamp": timestamps[max(0, index - 1)]}
@@ -269,10 +257,7 @@ def register_callbacks(app: Dash, store: ResultStore) -> None:
             store.refresh()
 
         snapshot = store.snapshot()
-        if (
-            triggered == "auto-refresh-interval.n_intervals"
-            and snapshot.version == previous_version
-        ):
+        if triggered == "auto-refresh-interval.n_intervals" and snapshot.version == previous_version:
             return (
                 dash.no_update,
                 dash.no_update,
@@ -281,9 +266,7 @@ def register_callbacks(app: Dash, store: ResultStore) -> None:
             )
 
         requested_base = (
-            base_request.get("timestamp")
-            if triggered == "base-request-store.data" and base_request
-            else current_base
+            base_request.get("timestamp") if triggered == "base-request-store.data" and base_request else current_base
         )
         rows, actual_base = build_run_rows(
             snapshot.results,
@@ -356,11 +339,7 @@ def register_callbacks(app: Dash, store: ResultStore) -> None:
         if ctx.triggered_id == "select-all":
             return {"ids": available_ids}
 
-        selected_ids = [
-            row_id
-            for row_id in selected_row_ids(current_selection)
-            if row_id in available_ids
-        ]
+        selected_ids = [row_id for row_id in selected_row_ids(current_selection) if row_id in available_ids]
         if ctx.triggered_id == "add-latest":
             latest = max(available_ids)
             if latest not in selected_ids:

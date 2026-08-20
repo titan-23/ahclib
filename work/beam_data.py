@@ -20,9 +20,7 @@ def compute_tree_layout(
     if mutate_children_order:
         effective_children = children_dict
     else:
-        effective_children = {
-            parent_id: list(child_ids) for parent_id, child_ids in children_dict.items()
-        }
+        effective_children = {parent_id: list(child_ids) for parent_id, child_ids in children_dict.items()}
 
     subtree_sizes: dict[str, int] = {}
     postorder_nodes: list[str] = []
@@ -31,9 +29,7 @@ def compute_tree_layout(
         node_id, processed = traversal_stack.pop()
         if processed:
             child_ids = effective_children.get(node_id, [])
-            subtree_sizes[node_id] = 1 + sum(
-                subtree_sizes.get(child_id, 1) for child_id in child_ids
-            )
+            subtree_sizes[node_id] = 1 + sum(subtree_sizes.get(child_id, 1) for child_id in child_ids)
             postorder_nodes.append(node_id)
         else:
             traversal_stack.append((node_id, True))
@@ -163,9 +159,7 @@ def compute_compact_layout(
 
     root_children = children_dict_full.get(root_id)
     if root_children:
-        filtered_children = [
-            child_id for child_id in root_children if child_id in active_set
-        ]
+        filtered_children = [child_id for child_id in root_children if child_id in active_set]
         if filtered_children:
             active_children[root_id] = filtered_children
 
@@ -173,9 +167,7 @@ def compute_compact_layout(
         child_ids = children_dict_full.get(parent_id)
         if not child_ids:
             continue
-        filtered_children = [
-            child_id for child_id in child_ids if child_id in active_set
-        ]
+        filtered_children = [child_id for child_id in child_ids if child_id in active_set]
         if filtered_children:
             active_children[parent_id] = filtered_children
 
@@ -242,8 +234,7 @@ def load_and_process_data(
                 active_nodes_by_turn[turn].append(i)
 
         snapshots = [
-            {"turn": turn, "active_node_ids": active_node_ids}
-            for turn, active_node_ids in active_nodes_by_turn.items()
+            {"turn": turn, "active_node_ids": active_node_ids} for turn, active_node_ids in active_nodes_by_turn.items()
         ]
 
         history_data = {
@@ -322,9 +313,7 @@ def load_and_process_data(
             if active_node_id in nodes_by_id:
                 parents.add(nodes_by_id[active_node_id]["parent_id"])
                 node_data = nodes_by_id[active_node_id]
-                if node_data["score"] < infinite_score and node_data.get(
-                    "status", 0
-                ) not in (1, 2):
+                if node_data["score"] < infinite_score and node_data.get("status", 0) not in (1, 2):
                     valid_active_ids.append(active_node_id)
 
         if turn in turn_statistics:
@@ -349,15 +338,9 @@ def load_and_process_data(
                     else:
                         break
 
-            turn_statistics[turn]["common_ancestor_depth"] = (
-                max(0, common_count - 1) if paths else 0
-            )
+            turn_statistics[turn]["common_ancestor_depth"] = max(0, common_count - 1) if paths else 0
 
-    valid_scores = [
-        node["score"]
-        for node in history_data["nodes"]
-        if node["score"] < infinite_score
-    ]
+    valid_scores = [node["score"] for node in history_data["nodes"] if node["score"] < infinite_score]
 
     for statistics in turn_statistics.values():
         turn_scores = statistics["scores"]
@@ -408,10 +391,6 @@ def load_and_process_data(
     }
 
     max_turn = max([node["turn"] for node in nodes]) if nodes else 1
-    marks = {
-        turn: str(turn)
-        for turn in range(0, max_turn + 1)
-        if turn % 10 == 0 or turn == max_turn
-    }
+    marks = {turn: str(turn) for turn in range(0, max_turn + 1) if turn % 10 == 0 or turn == max_turn}
 
     return processed, max_turn, marks

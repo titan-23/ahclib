@@ -19,8 +19,7 @@ def parameter_column_specs(
             continue
         field = f"{PARAMETER_FIELD_PREFIX}{len(specs)}"
         is_numeric = bool(
-            pd.api.types.is_numeric_dtype(metadata[column])
-            and not pd.api.types.is_bool_dtype(metadata[column])
+            pd.api.types.is_numeric_dtype(metadata[column]) and not pd.api.types.is_bool_dtype(metadata[column])
         )
         specs.append((column, field, is_numeric))
     return specs
@@ -68,13 +67,9 @@ def build_run_rows(
         return [], None
 
     actual_base = base_timestamp if base_timestamp in timestamps else timestamps[0]
-    baseline = frame[frame["timestamp"] == actual_base][["case_id", "score"]].rename(
-        columns={"score": "base_score"}
-    )
+    baseline = frame[frame["timestamp"] == actual_base][["case_id", "score"]].rename(columns={"score": "base_score"})
     merged = pd.merge(frame, baseline, on="case_id", how="left")
-    merged["rel_score"] = calculate_relative_scores(
-        merged["score"], merged["base_score"]
-    )
+    merged["rel_score"] = calculate_relative_scores(merged["score"], merged["base_score"])
 
     if run_summary is not None and not run_summary.empty:
         grouped = run_summary.copy()
@@ -101,12 +96,8 @@ def build_run_rows(
             axis=1,
         )
         if "state" in frame.columns:
-            failed_counts = (
-                frame[~frame["state"].isin(["", "AC"])].groupby("timestamp").size()
-            )
-            grouped["ng_cnt"] = (
-                grouped["timestamp"].map(failed_counts).fillna(0).astype(int)
-            )
+            failed_counts = frame[~frame["state"].isin(["", "AC"])].groupby("timestamp").size()
+            grouped["ng_cnt"] = grouped["timestamp"].map(failed_counts).fillna(0).astype(int)
         else:
             grouped["ng_cnt"] = 0
 
@@ -124,9 +115,7 @@ def build_run_rows(
     grouped["rel_missing"] = grouped["case_count"] - grouped["rel_count"]
 
     grouped["formatted"] = grouped["timestamp"].map(format_timestamp)
-    grouped["is_base_str"] = grouped["timestamp"].map(
-        lambda timestamp: "★" if timestamp == actual_base else "・"
-    )
+    grouped["is_base_str"] = grouped["timestamp"].map(lambda timestamp: "★" if timestamp == actual_base else "・")
     grouped["delete_btn"] = "🗑️"
     if run_annotations is not None:
         grouped["memo"] = grouped["timestamp"].map(
@@ -136,21 +125,13 @@ def build_run_rows(
             lambda timestamp: str(run_annotations.get(timestamp, {}).get("tag") or "")
         )
         grouped["favorite_str"] = grouped["timestamp"].map(
-            lambda timestamp: (
-                "★" if bool(run_annotations.get(timestamp, {}).get("favorite")) else "☆"
-            )
+            lambda timestamp: ("★" if bool(run_annotations.get(timestamp, {}).get("favorite")) else "☆")
         )
     else:
         grouped["memo"] = grouped["timestamp"].map(memo_getter)
-        grouped["tag"] = grouped["timestamp"].map(
-            tag_getter if tag_getter is not None else lambda _timestamp: ""
-        )
+        grouped["tag"] = grouped["timestamp"].map(tag_getter if tag_getter is not None else lambda _timestamp: "")
         grouped["favorite_str"] = grouped["timestamp"].map(
-            lambda timestamp: (
-                "★"
-                if favorite_getter is not None and favorite_getter(timestamp)
-                else "☆"
-            )
+            lambda timestamp: ("★" if favorite_getter is not None and favorite_getter(timestamp) else "☆")
         )
     grouped["id"] = grouped["timestamp"]
 
@@ -213,10 +194,7 @@ def build_case_rows(
     if "best" not in frame.columns:
         best_method = "min" if direction == "minimize" else "max"
         best_results = (
-            frame.groupby("case_id")["score"]
-            .agg(best_method)
-            .reset_index()
-            .rename(columns={"score": "best"})
+            frame.groupby("case_id")["score"].agg(best_method).reset_index().rename(columns={"score": "best"})
         )
 
     target = frame[frame["timestamp"] == target_timestamp].copy()
@@ -253,29 +231,15 @@ def build_case_rows(
 
     target["comparison"] = "比較不能"
     comparable = target["score_delta"].notna()
-    improved = (
-        target["score_delta"] < 0
-        if direction == "minimize"
-        else target["score_delta"] > 0
-    )
-    worsened = (
-        target["score_delta"] > 0
-        if direction == "minimize"
-        else target["score_delta"] < 0
-    )
+    improved = target["score_delta"] < 0 if direction == "minimize" else target["score_delta"] > 0
+    worsened = target["score_delta"] > 0 if direction == "minimize" else target["score_delta"] < 0
     target.loc[comparable & improved, "comparison"] = "改善"
     target.loc[comparable & worsened, "comparison"] = "悪化"
     target.loc[comparable & (target["score_delta"] == 0), "comparison"] = "同点"
     failed = ~target["state"].isin(["", "AC"])
     target.loc[failed, "comparison"] = target.loc[failed, "state"]
-    base_failed = (
-        (~failed)
-        & target["base_state"].notna()
-        & ~target["base_state"].isin(["", "AC"])
-    )
-    target.loc[base_failed, "comparison"] = "Base " + target.loc[
-        base_failed, "base_state"
-    ].astype(str)
+    base_failed = (~failed) & target["base_state"].notna() & ~target["base_state"].isin(["", "AC"])
+    target.loc[base_failed, "comparison"] = "Base " + target.loc[base_failed, "base_state"].astype(str)
     if best_results is not None:
         target = pd.merge(target, best_results, on="case_id", how="left")
 
@@ -285,9 +249,7 @@ def build_case_rows(
         if specs:
             parameter_fields = [field for _column, field, _numeric in specs]
             renamed_columns = {column: field for column, field, _numeric in specs}
-            parameter_data = metadata[["test_id", *renamed_columns]].rename(
-                columns=renamed_columns
-            )
+            parameter_data = metadata[["test_id", *renamed_columns]].rename(columns=renamed_columns)
             parameter_data = parameter_data.drop_duplicates(
                 subset="test_id",
                 keep="first",
@@ -297,11 +259,7 @@ def build_case_rows(
     if "state" not in target.columns:
         target["state"] = ""
     target["bookmark_str"] = target["case_id"].map(
-        lambda case_id: (
-            "★"
-            if bool((annotations or {}).get(str(case_id), {}).get("bookmark"))
-            else "☆"
-        )
+        lambda case_id: ("★" if bool((annotations or {}).get(str(case_id), {}).get("bookmark")) else "☆")
     )
     target["case_memo"] = target["case_id"].map(
         lambda case_id: str((annotations or {}).get(str(case_id), {}).get("memo") or "")

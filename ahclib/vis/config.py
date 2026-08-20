@@ -35,12 +35,8 @@ GRID_THEME = {
     })"""
 }
 
-NUMBER_FORMATTER = {
-    "function": "params.value == null ? '' : d3.format(',.12~f')(params.value)"
-}
-DECIMAL_FORMATTER = {
-    "function": "params.value == null ? '' : d3.format(',.3f')(params.value)"
-}
+NUMBER_FORMATTER = {"function": "params.value == null ? '' : d3.format(',.12~f')(params.value)"}
+DECIMAL_FORMATTER = {"function": "params.value == null ? '' : d3.format(',.3f')(params.value)"}
 
 RUN_COLUMN_DEFS = [
     {
@@ -165,15 +161,11 @@ def run_column_defs(
             column["cellStyle"] = {
                 "styleConditions": [
                     {
-                        "condition": (
-                            f"params.value != null && params.value {improve_operator} 1"
-                        ),
+                        "condition": (f"params.value != null && params.value {improve_operator} 1"),
                         "style": {"color": "#81c784", "fontWeight": "bold"},
                     },
                     {
-                        "condition": (
-                            f"params.value != null && params.value {worsen_operator} 1"
-                        ),
+                        "condition": (f"params.value != null && params.value {worsen_operator} 1"),
                         "style": {"color": "#e57373", "fontWeight": "bold"},
                     },
                 ]

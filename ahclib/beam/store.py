@@ -112,9 +112,7 @@ class BeamStore:
             get_weight=lambda value: len(value.node_ids) + len(value.edge_ids),
         )
     )
-    all_graph_cache: LRUCache[tuple[int, int], Any] = field(
-        default_factory=lambda: LRUCache(16)
-    )
+    all_graph_cache: LRUCache[tuple[int, int], Any] = field(default_factory=lambda: LRUCache(16))
     turn_stats_content: Any = None
 
     def replace(
@@ -150,13 +148,9 @@ class BeamStore:
             current_id = nodes_by_id[current_id]["spid"]
         path_ids.append("-1")
         action_sequence = "".join(
-            nodes_by_id[path_id].get("action", "")
-            for path_id in reversed(path_ids)
-            if path_id in nodes_by_id
+            nodes_by_id[path_id].get("action", "") for path_id in reversed(path_ids) if path_id in nodes_by_id
         )
-        edge_ids = [
-            f"e{path_ids[i + 1]}_{path_ids[i]}" for i in range(len(path_ids) - 1)
-        ]
+        edge_ids = [f"e{path_ids[i + 1]}_{path_ids[i]}" for i in range(len(path_ids) - 1)]
         result = PathData(
             node_ids=tuple(path_ids),
             action_sequence=action_sequence,
@@ -187,12 +181,8 @@ class BeamStore:
         result = SubtreeData(
             node_ids=tuple(subtree_node_ids),
             edge_ids=tuple(subtree_edge_ids),
-            node_selector=",".join(
-                f'node[id="{descendant_id}"]' for descendant_id in subtree_node_ids
-            ),
-            edge_selector=",".join(
-                f'edge[id="{edge_id}"]' for edge_id in subtree_edge_ids
-            ),
+            node_selector=",".join(f'node[id="{descendant_id}"]' for descendant_id in subtree_node_ids),
+            edge_selector=",".join(f'edge[id="{edge_id}"]' for edge_id in subtree_edge_ids),
         )
         self.subtree_cache[node_id] = result
         return result

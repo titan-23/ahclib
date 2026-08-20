@@ -189,11 +189,7 @@ def _build_sidebar(direction: str, read_only: bool) -> Component:
                         ],
                     ),
                     html.Div(
-                        (
-                            "読み取り専用モード"
-                            if read_only
-                            else "※ Memo 列と Tag 列は編集後に自動保存されます"
-                        ),
+                        ("読み取り専用モード" if read_only else "※ Memo 列と Tag 列は編集後に自動保存されます"),
                         style={
                             "fontSize": "11px",
                             "color": "#888",
@@ -463,11 +459,7 @@ def _build_main(direction: str, read_only: bool) -> Component:
                                         rowData=[],
                                         getRowId="params.data.id",
                                         selectedRows=[],
-                                        eventListeners={
-                                            "cellKeyDown": [
-                                                "caseKeyNavigation(params, setGridProps)"
-                                            ]
-                                        },
+                                        eventListeners={"cellKeyDown": ["caseKeyNavigation(params, setGridProps)"]},
                                         defaultColDef={
                                             "sortable": True,
                                             "resizable": True,

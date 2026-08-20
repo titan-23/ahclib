@@ -15,9 +15,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 TAILSCALE_SERVE_STARTUP_TIMEOUT_SEC = 120
-TAILSCALE_PRIVATE_URL_PATTERN = re.compile(
-    r"https://[A-Za-z0-9][A-Za-z0-9.-]*\.ts\.net(?::\d+)?"
-)
+TAILSCALE_PRIVATE_URL_PATTERN = re.compile(r"https://[A-Za-z0-9][A-Za-z0-9.-]*\.ts\.net(?::\d+)?")
 
 
 def _find_tailscale_executable() -> str:
@@ -28,9 +26,7 @@ def _find_tailscale_executable() -> str:
     if os.name == "nt":
         program_files = os.getenv("ProgramFiles")
         if program_files:
-            windows_executable = os.path.join(
-                program_files, "Tailscale", "tailscale.exe"
-            )
+            windows_executable = os.path.join(program_files, "Tailscale", "tailscale.exe")
             if os.path.isfile(windows_executable):
                 return windows_executable
 

@@ -1,6 +1,7 @@
 import argparse
 import collections
 import concurrent.futures
+import contextlib
 import csv
 import datetime
 import math
@@ -16,7 +17,18 @@ import time
 from dataclasses import dataclass, field
 from logging import getLogger
 from random import Random
-from typing import Any, Callable, ClassVar, Iterable, Iterator, Literal, Optional, Union
+from typing import (
+    Any,
+    Callable,
+    ClassVar,
+    ContextManager,
+    Iterable,
+    Iterator,
+    Literal,
+    Mapping,
+    Optional,
+    Union,
+)
 
 import optuna
 import pandas as pd
@@ -48,6 +60,7 @@ SolverState = Literal["AC", "TLE", "ERROR", "INNER_ERROR"]
 Direction = Literal["minimize", "maximize"]
 Score = Union[int, float]
 CaseResult = tuple[str, Score, float, SolverState, str]
+CpuLock = ContextManager[Any]
 
 # 打ち切り判定後にソルバーを終了するための監視間隔と猶予時間
 PRUNER_CANCEL_POLL_SEC = 0.05
@@ -55,6 +68,33 @@ PROCESS_TERMINATE_GRACE_SEC = 0.5
 
 # 主な処理は外部ソルバーの待機なので、GIL の影響が小さい ThreadPoolExecutor を使う
 # ProcessPoolExecutor では集計状態の共有と関数の直列化が必要になる
+
+
+def get_cpu_affinity_ids(njobs: int) -> tuple[int, ...]:
+    """solver に割り当てる logical CPU の一覧を返す"""
+    get_affinity = getattr(os, "sched_getaffinity", None)
+    if os.name != "posix" or get_affinity is None:
+        raise RuntimeError("--cpu-affinity は Linux 環境でのみ利用できます")
+    if shutil.which("taskset") is None:
+        raise RuntimeError("--cpu-affinity には taskset が必要です (Ubuntu では util-linux に含まれます)")
+
+    available_cpu_ids = tuple(sorted(get_affinity(0)))
+    if not available_cpu_ids:
+        raise RuntimeError("利用可能な logical CPU が見つかりません")
+
+    # 複数 CPU がある場合は最小 ID を solver 用から外す
+    solver_cpu_ids = available_cpu_ids[1:] if len(available_cpu_ids) > 1 else available_cpu_ids
+    return solver_cpu_ids[: max(1, njobs)]
+
+
+def _command_with_cpu_affinity(command: list[str], cpu_id: Optional[int]) -> list[str]:
+    if cpu_id is None:
+        return command
+    return ["taskset", "--cpu-list", str(cpu_id), *command]
+
+
+def _cpu_lock_context(cpu_lock: Optional[CpuLock]) -> ContextManager[Any]:
+    return cpu_lock if cpu_lock is not None else contextlib.nullcontext()
 
 
 @dataclass
@@ -107,21 +147,24 @@ def _execute_solver(
     command: list[str],
     timeout: Optional[float],
     is_int: bool,
+    cpu_id: Optional[int] = None,
+    cpu_lock: Optional[CpuLock] = None,
 ) -> tuple[SolverState, Score, str, str, float]:
     """入力ファイルをソルバーへ渡し、状態・スコア・出力・実行時間を返す"""
     with open(input_file, "r", encoding="utf-8") as input_stream:
         input_text = input_stream.read()
     try:
-        start = time.perf_counter()
-        result = subprocess.run(
-            command,
-            input=input_text,
-            timeout=timeout,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        elapsed = time.perf_counter() - start
+        with _cpu_lock_context(cpu_lock):
+            start = time.perf_counter()
+            result = subprocess.run(
+                _command_with_cpu_affinity(command, cpu_id),
+                input=input_text,
+                timeout=timeout,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            elapsed = time.perf_counter() - start
         score = _extract_last_score(result.stderr, is_int)
         return "AC", score, result.stdout, result.stderr, elapsed
     except subprocess.TimeoutExpired as e:
@@ -173,6 +216,8 @@ def _execute_solver_cancellable(
     timeout: Optional[float],
     is_int: bool,
     cancel_event: threading.Event,
+    cpu_id: Optional[int] = None,
+    cpu_lock: Optional[CpuLock] = None,
 ) -> Optional[tuple[SolverState, Score, str, str, float]]:
     """ソルバーを実行し、中止通知を受けた場合は終了して ``None`` を返す"""
     if cancel_event.is_set():
@@ -182,48 +227,51 @@ def _execute_solver_cancellable(
         input_text = input_stream.read()
 
     process: Optional[subprocess.Popen[str]] = None
-    start = time.perf_counter()
     try:
-        process = subprocess.Popen(
-            command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=(os.name == "posix"),
-        )
-        communicate_input: Optional[str] = input_text
-
-        while True:
+        with _cpu_lock_context(cpu_lock):
             if cancel_event.is_set():
-                _terminate_process(process)
                 return None
+            start = time.perf_counter()
+            process = subprocess.Popen(
+                _command_with_cpu_affinity(command, cpu_id),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=(os.name == "posix"),
+            )
+            communicate_input: Optional[str] = input_text
 
-            elapsed = time.perf_counter() - start
-            remaining = None if timeout is None else timeout - elapsed
-            if remaining is not None and remaining <= 0:
-                stdout, stderr = _terminate_process(process)
-                return "TLE", math.nan, stdout, stderr, timeout
+            while True:
+                if cancel_event.is_set():
+                    _terminate_process(process)
+                    return None
 
-            wait_sec = PRUNER_CANCEL_POLL_SEC
-            if remaining is not None:
-                wait_sec = min(wait_sec, remaining)
+                elapsed = time.perf_counter() - start
+                remaining = None if timeout is None else timeout - elapsed
+                if remaining is not None and remaining <= 0:
+                    stdout, stderr = _terminate_process(process)
+                    return "TLE", math.nan, stdout, stderr, timeout
 
-            try:
-                stdout, stderr = process.communicate(
-                    input=communicate_input,
-                    timeout=wait_sec,
-                )
-            except subprocess.TimeoutExpired:
-                # 最初の communicate が input を保持するため再送しない
-                communicate_input = None
-                continue
+                wait_sec = PRUNER_CANCEL_POLL_SEC
+                if remaining is not None:
+                    wait_sec = min(wait_sec, remaining)
 
-            elapsed = time.perf_counter() - start
-            if process.returncode != 0:
-                return "ERROR", math.nan, stdout or "", stderr or "", -1.0
-            score = _extract_last_score(stderr or "", is_int)
-            return "AC", score, stdout or "", stderr or "", elapsed
+                try:
+                    stdout, stderr = process.communicate(
+                        input=communicate_input,
+                        timeout=wait_sec,
+                    )
+                except subprocess.TimeoutExpired:
+                    # 最初の communicate が input を保持するため再送しない
+                    communicate_input = None
+                    continue
+
+                elapsed = time.perf_counter() - start
+                if process.returncode != 0:
+                    return "ERROR", math.nan, stdout or "", stderr or "", -1.0
+                score = _extract_last_score(stderr or "", is_int)
+                return "AC", score, stdout or "", stderr or "", elapsed
     except Exception as e:
         if process is not None and process.poll() is None:
             _terminate_process(process)
@@ -255,9 +303,7 @@ def _format_relative_score(
     formatted_score = f"{relative_score:{fmt}}"
     if relative_score == 1.0:
         return formatted_score
-    is_improved = (
-        relative_score < 1.0 if direction == "minimize" else relative_score > 1.0
-    )
+    is_improved = relative_score < 1.0 if direction == "minimize" else relative_score > 1.0
     return to_green(formatted_score) if is_improved else to_red(formatted_score)
 
 
@@ -278,13 +324,9 @@ def _log_solver_error(input_file: str, state: SolverState) -> None:
 
 def _write_record(output_dir: str, filename: str, stdout: str, stderr: str) -> None:
     """ソルバーの標準出力と標準エラー出力を保存する"""
-    with open(
-        os.path.join(output_dir, ERR_SUBDIR, filename), "w", encoding="utf-8"
-    ) as error_file:
+    with open(os.path.join(output_dir, ERR_SUBDIR, filename), "w", encoding="utf-8") as error_file:
         error_file.write(stderr)
-    with open(
-        os.path.join(output_dir, OUT_SUBDIR, filename), "w", encoding="utf-8"
-    ) as output_file:
+    with open(os.path.join(output_dir, OUT_SUBDIR, filename), "w", encoding="utf-8") as output_file:
         output_file.write(stdout)
 
 
@@ -304,11 +346,7 @@ class _LogFormatter:
         return len(str(self.total_files))
 
     def format_score(self, score: Score) -> str:
-        return (
-            f"{score:>{self.SCORE_WIDTH}}"
-            if self.is_int
-            else f"{score:>{self.SCORE_WIDTH}.3f}"
-        )
+        return f"{score:>{self.SCORE_WIDTH}}" if self.is_int else f"{score:>{self.SCORE_WIDTH}.3f}"
 
     def format_average_score(self, average: float) -> str:
         return f"{average:>{self.SCORE_WIDTH}.3f}"
@@ -332,10 +370,7 @@ class _LogFormatter:
         improved_text = f"{improved:>{width}}"
         unchanged_text = f"{unchanged:>{width}}"
         worsened_text = f"{worsened:>{width}}"
-        return (
-            f"{to_green(improved_text)} / {unchanged_text} / "
-            f"{to_red(worsened_text)}"
-        )
+        return f"{to_green(improved_text)} / {unchanged_text} / " f"{to_red(worsened_text)}"
 
     def format_relative_score(
         self,
@@ -407,13 +442,21 @@ def _run_case_for_opt(
     use_relative_score: bool,
     baseline_scores: dict[str, float],
     cancel_event: Optional[threading.Event] = None,
+    cpu_id: Optional[int] = None,
+    cpu_lock: Optional[CpuLock] = None,
 ) -> Optional[float]:
     """Optuna 用に 1 ケースを実行し、失敗時は nan を返す"""
     if cancel_event is None:
-        result = _execute_solver(input_file, command, timeout, is_int)
+        result = _execute_solver(input_file, command, timeout, is_int, cpu_id, cpu_lock)
     else:
         result = _execute_solver_cancellable(
-            input_file, command, timeout, is_int, cancel_event
+            input_file,
+            command,
+            timeout,
+            is_int,
+            cancel_event,
+            cpu_id,
+            cpu_lock,
         )
         if result is None:
             return None
@@ -437,6 +480,8 @@ def _worker_process_file_opt_pruner(args) -> tuple[int, Optional[float]]:
         use_relative_score,
         baseline_scores,
         cancel_event,
+        cpu_id,
+        cpu_lock,
     ) = args
     score = _run_case_for_opt(
         input_file,
@@ -446,6 +491,8 @@ def _worker_process_file_opt_pruner(args) -> tuple[int, Optional[float]]:
         use_relative_score,
         baseline_scores,
         cancel_event,
+        cpu_id,
+        cpu_lock,
     )
     return case_index, score
 
@@ -460,6 +507,8 @@ def _worker_process_file_light(args) -> float:
         use_relative_score,
         baseline_scores,
         cancel_event,
+        cpu_id,
+        cpu_lock,
     ) = args
     score = _run_case_for_opt(
         input_file,
@@ -469,6 +518,8 @@ def _worker_process_file_light(args) -> float:
         use_relative_score,
         baseline_scores,
         cancel_event,
+        cpu_id,
+        cpu_lock,
     )
     return math.nan if score is None else score
 
@@ -505,11 +556,7 @@ def _update_running_stats(
                 if relative_score == 1.0:
                     state.rel_same_cnt += 1
                 else:
-                    is_good = (
-                        (relative_score < 1.0)
-                        if formatter.direction == "minimize"
-                        else (relative_score > 1.0)
-                    )
+                    is_good = (relative_score < 1.0) if formatter.direction == "minimize" else (relative_score > 1.0)
                     if is_good:
                         state.rel_good_cnt += 1
                     else:
@@ -519,9 +566,7 @@ def _update_running_stats(
             )
             if state.rel_cnt > 0:
                 average_relative_score = math.exp(state.rel_log_sum / state.rel_cnt)
-                relative_average_text = formatter.format_relative_score(
-                    average_relative_score
-                )
+                relative_average_text = formatter.format_relative_score(average_relative_score)
             else:
                 relative_average_text = to_red("nan")
     return (
@@ -541,9 +586,7 @@ def _handle_ac_case(
     config: _RunConfig,
     state: WorkerState,
 ) -> CaseResult:
-    relative_score = _calculate_relative_score(
-        score, input_file, config.baseline_scores
-    )
+    relative_score = _calculate_relative_score(score, input_file, config.baseline_scores)
     if config.verbose:
         (
             count,
@@ -615,9 +658,14 @@ def _handle_error_case(
 
 def _worker_process_file(args) -> CaseResult:
     """1 ケースを実行し、ログとファイル出力を処理する"""
-    input_file, config, state = args
+    input_file, config, state, cpu_id, cpu_lock = args
     solver_state, score, stdout, stderr, elapsed = _execute_solver(
-        input_file, config.command, config.timeout, config.is_int
+        input_file,
+        config.command,
+        config.timeout,
+        config.is_int,
+        cpu_id,
+        cpu_lock,
     )
     if solver_state == "AC":
         return _handle_ac_case(
@@ -646,13 +694,14 @@ def _submit_next(
     argument_iterator: Iterator,
     pending_futures: dict,
     worker: Callable,
+    lane_id: Optional[int] = None,
 ) -> None:
     """次の引数を executor へ渡し、入力が尽きていれば何もしない"""
     try:
         worker_arguments = next(argument_iterator)
     except StopIteration:
         return
-    pending_futures[executor.submit(worker, worker_arguments)] = worker_arguments
+    pending_futures[executor.submit(worker, worker_arguments)] = lane_id
 
 
 class ParallelTester:
@@ -671,6 +720,8 @@ class ParallelTester:
         pre_dir_name: str,
         is_int: bool = True,
         optuna_seed: Optional[int] = None,
+        cpu_ids: tuple[int, ...] = (),
+        cpu_locks: Optional[Mapping[int, CpuLock]] = None,
     ) -> None:
         """ParallelTester を初期化する
 
@@ -685,11 +736,11 @@ class ParallelTester:
             timeout: 1 ケースの制限時間で単位は ms、``None`` なら無制限
             is_int: 整数スコアなら ``True``、小数スコアなら ``False``
             optuna_seed: ``run_opt_pruner`` の入力順を決める乱数初期値
+            cpu_ids: solver を固定する logical CPU の一覧で、空なら固定しない
+            cpu_locks: Optuna session 間で共有する CPU ごとの lock
         """
         if direction != "minimize" and direction != "maximize":
-            logger.critical(
-                f"direction must be `minimize` or `maximize` but got {direction}."
-            )
+            logger.critical(f"direction must be `minimize` or `maximize` but got {direction}.")
             raise ValueError(f"Invalid direction: {direction}")
 
         self.direction = direction
@@ -699,11 +750,11 @@ class ParallelTester:
         self.added_command: list[str] = []
         self.input_file_names = input_file_names
         self.cpu_count = cpu_count
+        self.cpu_ids = cpu_ids
+        self.cpu_locks = dict(cpu_locks or {})
         self.verbose = verbose
         self.get_score = get_score
-        self.timeout = (
-            timeout / MS_PER_SEC if (timeout is not None) and (timeout >= 0) else None
-        )
+        self.timeout = timeout / MS_PER_SEC if (timeout is not None) and (timeout >= 0) else None
         self.use_relative_score = use_relative_score
         self.is_int = is_int
         pre_csv = os.path.join(RESULTS_DIR, ALL_TESTS_SUBDIR, pre_dir_name, RESULT_CSV)
@@ -715,6 +766,16 @@ class ParallelTester:
         # trial ごとに異なる再現可能な入力順を作るための乱数初期値
         self.optuna_seed = optuna_seed
         self.last_output_dir: Optional[str] = None
+
+    def _cpu_target(self, case_index: int) -> tuple[Optional[int], Optional[CpuLock]]:
+        if not self.cpu_ids:
+            return None, None
+        cpu_id = self.cpu_ids[case_index % len(self.cpu_ids)]
+        return cpu_id, self.cpu_locks.get(cpu_id)
+
+    def _prepare_worker_arguments(self, case_index: int, worker_arguments: tuple[Any, ...]) -> tuple[Any, ...]:
+        cpu_id, cpu_lock = self._cpu_target(case_index)
+        return (*worker_arguments, cpu_id, cpu_lock)
 
     def show_score(self, scores: list[float]) -> float:
         """ケース別スコアを集約してログへ出力する"""
@@ -751,14 +812,33 @@ class ParallelTester:
     def _map_in_parallel(
         self,
         worker: Callable[[Any], Any],
-        worker_arguments: list[Any],
+        worker_arguments: list[tuple[Any, ...]],
         cancel_event: Optional[threading.Event] = None,
     ) -> list[Any]:
         """ThreadPoolExecutor で全ケースを並列実行する"""
         max_workers = max(1, self.cpu_count)
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
         try:
-            return list(executor.map(worker, worker_arguments))
+            prepared_arguments = [
+                self._prepare_worker_arguments(case_index, arguments)
+                for case_index, arguments in enumerate(worker_arguments)
+            ]
+            if not self.cpu_ids:
+                return list(executor.map(worker, prepared_arguments))
+
+            lanes: list[list[tuple[int, tuple[Any, ...]]]] = [[] for _ in self.cpu_ids]
+            for case_index, arguments in enumerate(prepared_arguments):
+                lanes[case_index % len(lanes)].append((case_index, arguments))
+
+            def run_lane(
+                lane: list[tuple[int, tuple[Any, ...]]],
+            ) -> list[tuple[int, Any]]:
+                return [(case_index, worker(arguments)) for case_index, arguments in lane]
+
+            lane_results = list(executor.map(run_lane, lanes))
+            indexed_results = [indexed_result for lane_result in lane_results for indexed_result in lane_result]
+            indexed_results.sort(key=lambda result: result[0])
+            return [result for _, result in indexed_results]
         finally:
             # KeyboardInterrupt 時は executor の終了待ちより先にソルバーへ通知する
             if cancel_event is not None:
@@ -773,15 +853,14 @@ class ParallelTester:
         """
         scores: list[Optional[float]] = [None] * len(self.input_file_names)
         indexed_input_files = list(enumerate(self.input_file_names))
-        shuffle_seed = (
-            None if self.optuna_seed is None else self.optuna_seed + trial.number
-        )
+        shuffle_seed = None if self.optuna_seed is None else self.optuna_seed + trial.number
         Random(shuffle_seed).shuffle(indexed_input_files)
         cancel_event = threading.Event()
 
         command = self.execute_command + self.added_command
-        worker_arguments = [
-            (
+        scheduled_arguments = []
+        for case_index, input_file in indexed_input_files:
+            arguments = (
                 input_file,
                 case_index,
                 command,
@@ -791,22 +870,39 @@ class ParallelTester:
                 self.pre_data,
                 cancel_event,
             )
-            for case_index, input_file in indexed_input_files
-        ]
+            cpu_id, _ = self._cpu_target(case_index)
+            scheduled_arguments.append((cpu_id, self._prepare_worker_arguments(case_index, arguments)))
 
         max_workers = max(1, self.cpu_count)
-        argument_iterator = iter(worker_arguments)
+        argument_iterator = iter(arguments for _, arguments in scheduled_arguments)
+        lane_iterators: dict[int, Iterator] = {}
+        if self.cpu_ids:
+            lane_arguments: dict[int, list[tuple[Any, ...]]] = {cpu_id: [] for cpu_id in self.cpu_ids}
+            for cpu_id, arguments in scheduled_arguments:
+                if cpu_id is not None:
+                    lane_arguments[cpu_id].append(arguments)
+            lane_iterators = {cpu_id: iter(arguments) for cpu_id, arguments in lane_arguments.items()}
         pruned = False
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            pending_futures: dict[concurrent.futures.Future, tuple] = {}
+            pending_futures: dict[concurrent.futures.Future, Optional[int]] = {}
             try:
-                for _ in range(max_workers):
-                    _submit_next(
-                        executor,
-                        argument_iterator,
-                        pending_futures,
-                        _worker_process_file_opt_pruner,
-                    )
+                if self.cpu_ids:
+                    for cpu_id, lane_iterator in lane_iterators.items():
+                        _submit_next(
+                            executor,
+                            lane_iterator,
+                            pending_futures,
+                            _worker_process_file_opt_pruner,
+                            cpu_id,
+                        )
+                else:
+                    for _ in range(max_workers):
+                        _submit_next(
+                            executor,
+                            argument_iterator,
+                            pending_futures,
+                            _worker_process_file_opt_pruner,
+                        )
 
                 while pending_futures:
                     done, _ = concurrent.futures.wait(
@@ -814,7 +910,7 @@ class ParallelTester:
                         return_when=concurrent.futures.FIRST_COMPLETED,
                     )
                     for future in done:
-                        pending_futures.pop(future)
+                        lane_id = pending_futures.pop(future)
                         case_index, score = future.result()
                         if score is None:
                             continue
@@ -828,12 +924,21 @@ class ParallelTester:
                             for pending in pending_futures:
                                 pending.cancel()
                             break
-                        _submit_next(
-                            executor,
-                            argument_iterator,
-                            pending_futures,
-                            _worker_process_file_opt_pruner,
-                        )
+                        if lane_id is None:
+                            _submit_next(
+                                executor,
+                                argument_iterator,
+                                pending_futures,
+                                _worker_process_file_opt_pruner,
+                            )
+                        else:
+                            _submit_next(
+                                executor,
+                                lane_iterators[lane_id],
+                                pending_futures,
+                                _worker_process_file_opt_pruner,
+                                lane_id,
+                            )
                     if pruned:
                         break
             finally:
@@ -874,11 +979,7 @@ class ParallelTester:
             created_at.strftime(RESULT_DIR_DATETIME_FORMAT),
         )
         if os.path.exists(output_dir):
-            logger.error(
-                to_red(
-                    f"Output dir already exists (aborting to avoid overwrite): {output_dir}"
-                )
-            )
+            logger.error(to_red(f"Output dir already exists (aborting to avoid overwrite): {output_dir}"))
             raise FileExistsError(output_dir)
         os.makedirs(output_dir)
         return output_dir
@@ -944,9 +1045,7 @@ class ParallelTester:
         output_dir = self._setup_output_dir(record)
         self.last_output_dir = output_dir
         if memo:
-            with open(
-                os.path.join(output_dir, "memo.txt"), "w", encoding="utf-8"
-            ) as memo_file:
+            with open(os.path.join(output_dir, "memo.txt"), "w", encoding="utf-8") as memo_file:
                 memo_file.write(memo)
 
         formatter = _LogFormatter(
@@ -968,10 +1067,7 @@ class ParallelTester:
             formatter=formatter,
         )
         worker_state = WorkerState()
-        worker_arguments = [
-            (input_file, run_config, worker_state)
-            for input_file in self.input_file_names
-        ]
+        worker_arguments = [(input_file, run_config, worker_state) for input_file in self.input_file_names]
 
         results = self._map_in_parallel(_worker_process_file, worker_arguments)
 
@@ -1001,20 +1097,33 @@ class ParallelTester:
             default=False,
             help="show logs. default is `False`.",
         )
+        parser.add_argument(
+            "--cpu-affinity",
+            action="store_true",
+            help="ケースごとに solver を同じ logical CPU へ割り当てる",
+        )
         return parser.parse_args()
 
 
 def build_tester(
-    settings: AHCSettings, njobs: int, verbose: bool = False
+    settings: AHCSettings,
+    njobs: int,
+    verbose: bool = False,
+    cpu_affinity: bool = False,
+    affinity_cpu_ids: Optional[tuple[int, ...]] = None,
+    cpu_locks: Optional[Mapping[int, CpuLock]] = None,
 ) -> ParallelTester:
     """`AHCSettings` から `ParallelTester` を組み立てて返す"""
+    if affinity_cpu_ids is None:
+        affinity_cpu_ids = get_cpu_affinity_ids(njobs) if cpu_affinity else ()
+    cpu_count = len(affinity_cpu_ids) if affinity_cpu_ids else min(njobs, multiprocessing.cpu_count() - 1)
     tester = ParallelTester(
         direction=settings.direction,
         filename=settings.filename,
         compile_command=settings.compile_command,
         execute_command=settings.execute_command,
         input_file_names=settings.input_file_names,
-        cpu_count=min(njobs, multiprocessing.cpu_count() - 1),
+        cpu_count=cpu_count,
         verbose=verbose,
         get_score=settings.get_score,
         timeout=settings.timeout,
@@ -1022,6 +1131,8 @@ def build_tester(
         pre_dir_name=settings.pre_dir_name,
         is_int=settings.is_int,
         optuna_seed=settings.optuna_seed,
+        cpu_ids=affinity_cpu_ids,
+        cpu_locks=cpu_locks,
     )
     return tester
 
@@ -1068,10 +1179,7 @@ def _log_relative_score_summary(scores: list[CaseResult], direction: Direction) 
     logger.info(f"Better : {_format_count(improved_count, True)}.")
     logger.info(f"Same   : {equal_count}.")
     logger.info(f"Worse  : {_format_count(worsened_count, False)}.")
-    logger.info(
-        f"RelativeScore: "
-        f"{_format_relative_score(average_relative_score, direction)}."
-    )
+    logger.info(f"RelativeScore: " f"{_format_relative_score(average_relative_score, direction)}.")
 
 
 ERROR_TABLE_STATES: tuple[SolverState, ...] = ("TLE", "ERROR", "INNER_ERROR")
@@ -1104,7 +1212,7 @@ def _log_error_table(failed_cases: list[tuple[str, SolverState]]) -> None:
     logger.error(to_red(f" Inner : {state_counts['INNER_ERROR']} "))
 
 
-def _log_settings(settings: AHCSettings, njobs: int) -> None:
+def _log_settings(settings: AHCSettings, njobs: int, cpu_ids: tuple[int, ...]) -> None:
     logger.info(f"--- {to_bold('[Settings]')} ---")
     logger.info(f"direction       : {settings.direction}")
     logger.info(f"timeout         : {settings.timeout}")
@@ -1113,6 +1221,8 @@ def _log_settings(settings: AHCSettings, njobs: int) -> None:
         logger.info(f"pre_dir_name    : {settings.pre_dir_name}")
     logger.info(f"execute_command : {settings.execute_command}")
     logger.info(f"njobs           : {njobs}")
+    cpu_affinity = ", ".join(map(str, cpu_ids)) if cpu_ids else "disabled"
+    logger.info(f"cpu affinity    : {cpu_affinity}")
     logger.info("----------------")
 
 
@@ -1123,15 +1233,17 @@ def run_test(
     compile: bool = False,
     record: bool = True,
     memo: Optional[str] = None,
+    cpu_affinity: bool = False,
 ) -> float:
     configure_elapsed_logging()
 
-    njobs = max(1, min(njobs, multiprocessing.cpu_count() - 1))
+    if not cpu_affinity:
+        njobs = max(1, min(njobs, multiprocessing.cpu_count() - 1))
+
+    tester = build_tester(settings, njobs, verbose, cpu_affinity=cpu_affinity)
 
     if verbose:
-        _log_settings(settings, njobs)
-
-    tester = build_tester(settings, njobs, verbose)
+        _log_settings(settings, max(1, tester.cpu_count), tester.cpu_ids)
 
     if compile:
         if verbose:
@@ -1148,11 +1260,7 @@ def run_test(
     if settings.use_relative_score:
         _log_relative_score_summary(scores, settings.direction)
 
-    failed_cases = [
-        (filename, state)
-        for filename, score, _, state, _ in scores
-        if math.isnan(score)
-    ]
+    failed_cases = [(filename, state) for filename, score, _, state, _ in scores if math.isnan(score)]
     if failed_cases:
         _log_error_table(failed_cases)
 
@@ -1167,7 +1275,14 @@ def main() -> None:
     """コマンドライン引数を読み、並列テストを実行する"""
     args = ParallelTester.get_args()
     njobs = min(AHCSettings.njobs, multiprocessing.cpu_count() - 1)
-    run_test(AHCSettings, njobs, args.verbose, args.compile, True)
+    run_test(
+        AHCSettings,
+        njobs,
+        args.verbose,
+        args.compile,
+        True,
+        cpu_affinity=args.cpu_affinity,
+    )
 
 
 if __name__ == "__main__":

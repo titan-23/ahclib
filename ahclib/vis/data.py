@@ -67,9 +67,7 @@ def unique_case_ids(filenames: Iterable[object]) -> list[str]:
         case_id = normalize_case_id(filename)
         duplicate_number = counts.get(case_id, 0)
         counts[case_id] = duplicate_number + 1
-        result.append(
-            case_id if duplicate_number == 0 else f"{case_id}#{duplicate_number}"
-        )
+        result.append(case_id if duplicate_number == 0 else f"{case_id}#{duplicate_number}")
     return result
 
 
@@ -99,9 +97,7 @@ def get_ahc_setting(key: str, default: Any) -> Any:
 def format_timestamp(timestamp: str) -> str:
     for timestamp_format in ("%Y_%m_%d_%H_%M_%S", "%Y%m%d_%H%M"):
         try:
-            return datetime.strptime(timestamp, timestamp_format).strftime(
-                "%Y/%m/%d %H:%M"
-            )
+            return datetime.strptime(timestamp, timestamp_format).strftime("%Y/%m/%d %H:%M")
         except ValueError:
             continue
     return timestamp
@@ -123,9 +119,7 @@ class ResultStore:
             str,
             tuple[tuple[int, int], pd.DataFrame],
         ] = {}
-        self._frame_cache: Optional[
-            tuple[tuple[tuple[str, int, int], ...], pd.DataFrame]
-        ] = None
+        self._frame_cache: Optional[tuple[tuple[tuple[str, int, int], ...], pd.DataFrame]] = None
         self._version = 0
         self._comparison_cache: dict[
             tuple[int, Optional[str], Optional[str]],
@@ -231,10 +225,7 @@ class ResultStore:
             csv_path = os.path.join(folder_path, config.FILE_NAME)
             file_signature = (mtime_ns, size)
             try:
-                if (
-                    folder_path in self._csv_cache
-                    and self._csv_cache[folder_path][0] == file_signature
-                ):
+                if folder_path in self._csv_cache and self._csv_cache[folder_path][0] == file_signature:
                     frame = self._csv_cache[folder_path][1]
                 else:
                     frame = self._prepare_result_frame(pd.read_csv(csv_path), folder)
@@ -293,8 +284,7 @@ class ResultStore:
         quartiles = frame.groupby("timestamp")["score"].quantile([0.25, 0.75])
         grouped["iqr_score"] = grouped["timestamp"].map(
             lambda timestamp: (
-                quartiles.get((timestamp, 0.75), float("nan"))
-                - quartiles.get((timestamp, 0.25), float("nan"))
+                quartiles.get((timestamp, 0.75), float("nan")) - quartiles.get((timestamp, 0.25), float("nan"))
             )
         )
         grouped["ci95_score"] = grouped.apply(
@@ -307,14 +297,10 @@ class ResultStore:
         )
 
         if "state" in frame.columns:
-            failed_counts = (
-                frame[~frame["state"].isin(["", "AC"])].groupby("timestamp").size()
-            )
+            failed_counts = frame[~frame["state"].isin(["", "AC"])].groupby("timestamp").size()
         else:
             failed_counts = pd.Series(dtype="int64")
-        grouped["ng_cnt"] = (
-            grouped["timestamp"].map(failed_counts).fillna(0).astype(int)
-        )
+        grouped["ng_cnt"] = grouped["timestamp"].map(failed_counts).fillna(0).astype(int)
 
         warnings = []
         aggregate_scores: dict[str, Optional[float]] = {}
@@ -327,9 +313,7 @@ class ResultStore:
                 aggregate_scores[str(timestamp)] = float(self._score_aggregator(scores))
             except Exception as error:
                 aggregate_scores[str(timestamp)] = None
-                warnings.append(
-                    f"AHCSettings.get_score の計算失敗: {timestamp} ({error})"
-                )
+                warnings.append(f"AHCSettings.get_score の計算失敗: {timestamp} ({error})")
         grouped["aggregate_score"] = grouped["timestamp"].map(aggregate_scores)
         return grouped[columns], warnings
 
@@ -359,9 +343,7 @@ class ResultStore:
             run_summary, aggregate_warnings = self._build_run_summary(results)
             run_indices: dict[str, list[int]] = {}
             case_indices: dict[tuple[str, str], int] = {}
-            for index, (timestamp, case_id) in enumerate(
-                zip(results["timestamp"], results["case_id"])
-            ):
+            for index, (timestamp, case_id) in enumerate(zip(results["timestamp"], results["case_id"])):
                 timestamp = str(timestamp)
                 case_id = str(case_id)
                 run_indices.setdefault(timestamp, []).append(index)
@@ -384,12 +366,7 @@ class ResultStore:
                 run_summary=run_summary,
                 metadata=metadata,
                 warnings=warnings,
-                run_indices=MappingProxyType(
-                    {
-                        timestamp: tuple(indices)
-                        for timestamp, indices in run_indices.items()
-                    }
-                ),
+                run_indices=MappingProxyType({timestamp: tuple(indices) for timestamp, indices in run_indices.items()}),
                 case_indices=MappingProxyType(case_indices),
             )
             return self._snapshot
@@ -412,12 +389,8 @@ class ResultStore:
         if frame.empty or base_ts is None or target_ts is None:
             return pd.DataFrame(columns=columns)
 
-        base = current.run(base_ts)[["test_id", "name", "score"]].rename(
-            columns={"score": "base"}
-        )
-        target = current.run(target_ts)[["test_id", "score"]].rename(
-            columns={"score": "target"}
-        )
+        base = current.run(base_ts)[["test_id", "name", "score"]].rename(columns={"score": "base"})
+        target = current.run(target_ts)[["test_id", "score"]].rename(columns={"score": "target"})
         merged = pd.merge(base, target, on="test_id", how="inner")
         merged["base"] = pd.to_numeric(merged["base"], errors="coerce")
         merged["target"] = pd.to_numeric(merged["target"], errors="coerce")
@@ -493,8 +466,7 @@ class ResultStore:
             self._text_cache[key] = text
             self._text_cache_chars += len(text)
             while self._text_cache and (
-                len(self._text_cache) > TEXT_CACHE_MAX_FILES
-                or self._text_cache_chars > TEXT_CACHE_MAX_CHARS
+                len(self._text_cache) > TEXT_CACHE_MAX_FILES or self._text_cache_chars > TEXT_CACHE_MAX_CHARS
             ):
                 _old_key, old_text = self._text_cache.popitem(last=False)
                 self._text_cache_chars -= len(old_text)
@@ -539,9 +511,7 @@ class ResultStore:
             try:
                 with open(settings_path, "r", encoding="utf-8") as settings_file:
                     content = settings_file.read()
-                    filename_match = re.search(
-                        r'filename\s*=\s*["\'](.*?)["\']', content
-                    )
+                    filename_match = re.search(r'filename\s*=\s*["\'](.*?)["\']', content)
                     if filename_match:
                         src_filename = os.path.basename(filename_match.group(1))
             except Exception:
@@ -550,9 +520,7 @@ class ResultStore:
         if not src_filename and os.path.exists(dir_path):
             for filename in os.listdir(dir_path):
                 if (
-                    filename.endswith(".cpp")
-                    or filename.endswith(".py")
-                    or filename.endswith(".rs")
+                    filename.endswith(".cpp") or filename.endswith(".py") or filename.endswith(".rs")
                 ) and filename not in ["ahc_settings.py", "result.csv"]:
                     src_filename = filename
                     break
@@ -571,11 +539,7 @@ class ResultStore:
         return "(ソースコードが保存されていません)", src_filename
 
     def in_file(self, filename: str) -> str:
-        in_path = (
-            filename
-            if os.path.exists(filename)
-            else os.path.join(config.in_dir(), os.path.basename(filename))
-        )
+        in_path = filename if os.path.exists(filename) else os.path.join(config.in_dir(), os.path.basename(filename))
         return self._read_text(in_path)
 
     def visualizer_template(self) -> str:
@@ -639,9 +603,7 @@ class ResultStore:
             timestamp_list = [str(timestamp) for timestamp in timestamps]
             current = set(timestamp_list)
             self._run_annotation_cache = {
-                timestamp: cached
-                for timestamp, cached in self._run_annotation_cache.items()
-                if timestamp in current
+                timestamp: cached for timestamp, cached in self._run_annotation_cache.items() if timestamp in current
             }
 
             annotations = {}
@@ -686,11 +648,7 @@ class ResultStore:
         notes = self.run_annotations([timestamp]).get(timestamp, {}).get("cases", {})
         if not isinstance(notes, dict):
             return {}
-        return {
-            str(case_id): value
-            for case_id, value in notes.items()
-            if isinstance(value, dict)
-        }
+        return {str(case_id): value for case_id, value in notes.items() if isinstance(value, dict)}
 
     def save_case_memo(self, timestamp: str, case_id: str, memo: str) -> None:
         with self._lock:
@@ -840,9 +798,7 @@ class ResultStore:
         warnings = [self._settings_warning] if self._settings_warning else []
         current_ids = set(case_ids)
         self._metadata_row_cache = {
-            case_id: cached
-            for case_id, cached in self._metadata_row_cache.items()
-            if case_id in current_ids
+            case_id: cached for case_id, cached in self._metadata_row_cache.items() if case_id in current_ids
         }
 
         for path, case_id, row_signature in zip(
@@ -888,16 +844,11 @@ class ResultStore:
         parse_warning = None
         if input_parser:
             try:
-                parameters = {
-                    str(name): value for name, value in dict(input_parser(path)).items()
-                }
+                parameters = {str(name): value for name, value in dict(input_parser(path)).items()}
                 parameters["test_id"] = case_id
                 return parameters, None
             except Exception as error:
-                parse_warning = (
-                    f"parse_input_params の失敗: {case_id} ({error})"
-                    " 先頭の整数へ切り替え"
-                )
+                parse_warning = f"parse_input_params の失敗: {case_id} ({error})" " 先頭の整数へ切り替え"
                 logger.warning(
                     "Failed to parse input parameters for %s: %s",
                     path,
@@ -907,12 +858,8 @@ class ResultStore:
         try:
             with open(path, "r", encoding="utf-8") as input_file:
                 line = input_file.readline().strip()
-                numbers = [
-                    int(value) for value in line.split() if value.lstrip("-").isdigit()
-                ]
-                parameter_value = (
-                    float(numbers[0]) if numbers else float(os.path.getsize(path))
-                )
+                numbers = [int(value) for value in line.split() if value.lstrip("-").isdigit()]
+                parameter_value = float(numbers[0]) if numbers else float(os.path.getsize(path))
             return {"test_id": case_id, "Param": parameter_value}, parse_warning
         except (OSError, UnicodeError) as error:
             logger.warning("Failed to read input metadata for %s: %s", path, error)

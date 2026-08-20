@@ -76,9 +76,7 @@ app.layout = html.Div(
                             className="modern-btn",
                             style={"marginRight": "10px", "backgroundColor": "#4caf50"},
                         ),
-                        html.Button(
-                            "再生", id="play-button", n_clicks=0, className="modern-btn"
-                        ),
+                        html.Button("再生", id="play-button", n_clicks=0, className="modern-btn"),
                     ]
                 ),
                 html.Div(
@@ -380,9 +378,7 @@ app.layout = html.Div(
                                                             className="modern-btn",
                                                             style={
                                                                 "marginLeft": "10px",
-                                                                "backgroundColor": DARK_THEME[
-                                                                    "bookmark"
-                                                                ],
+                                                                "backgroundColor": DARK_THEME["bookmark"],
                                                                 "color": "#000",
                                                             },
                                                         ),
@@ -399,9 +395,7 @@ app.layout = html.Div(
                                                             },
                                                         ),
                                                         html.Div(
-                                                            style={
-                                                                "position": "relative"
-                                                            },
+                                                            style={"position": "relative"},
                                                             children=[
                                                                 dcc.Textarea(
                                                                     id="action-path-output",
@@ -563,9 +557,7 @@ def update_elements(
     if left_tab != "tab-tree":
         return dash.no_update, dash.no_update
 
-    trigger_id = (
-        callback_context.triggered[0]["prop_id"] if callback_context.triggered else ""
-    )
+    trigger_id = callback_context.triggered[0]["prop_id"] if callback_context.triggered else ""
     should_fit = trigger_id in ["fit-button.n_clicks", "full-data-store.data", ""]
 
     layout_config = {
@@ -623,9 +615,7 @@ def update_elements(
         cache_key = active_turn
         compact_positions = cache.get(cache_key)
         if compact_positions is None:
-            raw_positions = compute_compact_layout(
-                active_path, children_by_parent, nodes_by_id, root_id="-1"
-            )
+            raw_positions = compute_compact_layout(active_path, children_by_parent, nodes_by_id, root_id="-1")
             compact_positions = {}
             for node_id, x in raw_positions.items():
                 if node_id == "-1":
@@ -646,9 +636,7 @@ def update_elements(
     for node in sorted(nodes, key=lambda item: item.get("turn", 0)):
         node_id = str(node["node_id"])
         parent_id = str(node["parent_id"])
-        is_ancestor_collapsed[node_id] = (
-            parent_id in collapsed_set
-        ) or is_ancestor_collapsed.get(parent_id, False)
+        is_ancestor_collapsed[node_id] = (parent_id in collapsed_set) or is_ancestor_collapsed.get(parent_id, False)
 
     show_pruned = "show_pruned" in visibility and not compact_mode
     use_heatmap = "heatmap" in visibility
@@ -660,11 +648,7 @@ def update_elements(
         if not stats:
             return "rgb(128, 128, 128)"
         min_score, max_score = stats["min"], stats["max"]
-        ratio = (
-            0.5
-            if max_score == min_score
-            else (score - min_score) / (max_score - min_score)
-        )
+        ratio = 0.5 if max_score == min_score else (score - min_score) / (max_score - min_score)
         r, g, b = int(25 + ratio * 186), int(118 - ratio * 71), int(210 - ratio * 163)
         return f"rgb({r}, {g}, {b})"
 
@@ -706,21 +690,14 @@ def update_elements(
             visible_ids.add(node_id)
             parent_id = str(node["parent_id"])
             while parent_id != "-1" and parent_id not in visible_ids:
-                if (
-                    parent_id in nodes_by_id
-                    and nodes_by_id[parent_id]["turn"] < min_turn
-                ):
+                if parent_id in nodes_by_id and nodes_by_id[parent_id]["turn"] < min_turn:
                     visible_ids.add(parent_id)
                     parent_id = str(nodes_by_id[parent_id]["parent_id"])
                 else:
                     break
 
-    visible_nodes = [
-        nodes_by_id[node_id] for node_id in visible_ids if node_id in nodes_by_id
-    ]
-    visible_nodes.sort(
-        key=lambda node: (node["turn"], node["parent_id"], node["score"])
-    )
+    visible_nodes = [nodes_by_id[node_id] for node_id in visible_ids if node_id in nodes_by_id]
+    visible_nodes.sort(key=lambda node: (node["turn"], node["parent_id"], node["score"]))
 
     valid_ids = {"-1"}
     for node in visible_nodes:
@@ -815,9 +792,7 @@ def update_elements(
     return elements, layout_config
 
 
-@app.callback(
-    Output("turn-stats-container", "children"), Input("full-data-store", "data")
-)
+@app.callback(Output("turn-stats-container", "children"), Input("full-data-store", "data"))
 def update_turn_stats(_store_signal):
     processed = _DATA_CACHE.get("processed")
     if not processed:
@@ -839,9 +814,7 @@ def update_turn_stats(_store_signal):
             x_box.append(turn)
             y_box.append(score)
 
-    fig_score = go.Figure(
-        go.Box(x=x_box, y=y_box, name="Score", marker_color=DARK_THEME["accent"])
-    )
+    fig_score = go.Figure(go.Box(x=x_box, y=y_box, name="Score", marker_color=DARK_THEME["accent"]))
     fig_score.update_layout(
         title="ターンごとのスコア分布",
         template="plotly_dark",
@@ -851,9 +824,7 @@ def update_turn_stats(_store_signal):
     )
 
     parent_counts = [get_stats(turn).get("unique_parents", 0) for turn in turns]
-    fig_div = go.Figure(
-        go.Bar(x=turns, y=parent_counts, marker_color=DARK_THEME["bookmark"])
-    )
+    fig_div = go.Figure(go.Bar(x=turns, y=parent_counts, marker_color=DARK_THEME["bookmark"]))
     fig_div.update_layout(
         title="生存ノードの親の数",
         template="plotly_dark",
@@ -868,9 +839,7 @@ def update_turn_stats(_store_signal):
         valid_counts.append(
             max(
                 0,
-                stats.get("generated", 0)
-                - stats.get("pruned", 0)
-                - stats.get("invalid", 0),
+                stats.get("generated", 0) - stats.get("pruned", 0) - stats.get("invalid", 0),
             )
         )
         pruned_counts.append(stats.get("pruned", 0))
@@ -878,12 +847,8 @@ def update_turn_stats(_store_signal):
 
     fig_status = go.Figure(
         data=[
-            go.Bar(
-                name="有効", x=turns, y=valid_counts, marker_color=DARK_THEME["accent"]
-            ),
-            go.Bar(
-                name="破棄", x=turns, y=pruned_counts, marker_color=DARK_THEME["pruned"]
-            ),
+            go.Bar(name="有効", x=turns, y=valid_counts, marker_color=DARK_THEME["accent"]),
+            go.Bar(name="破棄", x=turns, y=pruned_counts, marker_color=DARK_THEME["pruned"]),
             go.Bar(
                 name="無効",
                 x=turns,
@@ -972,10 +937,7 @@ def update_all_graph(_store_signal, turn_range):
     min_turn, max_turn = turn_range
     nodes_by_id = processed.get("nodes_dict", {})
 
-    start_base_score = min(
-        [node["score"] for node in nodes if node["turn"] == min_turn]
-        or [nodes[0]["score"]]
-    )
+    start_base_score = min([node["score"] for node in nodes if node["turn"] == min_turn] or [nodes[0]["score"]])
 
     x, y = [], []
     for node in nodes:
@@ -1051,9 +1013,7 @@ def display_node(node_data, show_goal, clicked_child, store_signal):
     processed = _DATA_CACHE.get("processed", {})
     if not processed:
         return (
-            html.Div(
-                "ノードを選択してください", style={"color": "#aaa", "padding": "10px"}
-            ),
+            html.Div("ノードを選択してください", style={"color": "#aaa", "padding": "10px"}),
             "",
             "",
             go.Figure(),
@@ -1077,13 +1037,9 @@ def display_node(node_data, show_goal, clicked_child, store_signal):
         else None
     )
 
-    detail_elements = html.Div(
-        "ノードを選択してください", style={"color": "#aaa", "padding": "10px"}
-    )
+    detail_elements = html.Div("ノードを選択してください", style={"color": "#aaa", "padding": "10px"})
     action_seq = ""
-    state_visual = html.Div(
-        "ノードを選択してください", style={"color": "#aaa", "padding": "10px"}
-    )
+    state_visual = html.Div("ノードを選択してください", style={"color": "#aaa", "padding": "10px"})
     fig = go.Figure()
     new_styles = list(BASE_STYLESHEET)
 
@@ -1110,9 +1066,7 @@ def display_node(node_data, show_goal, clicked_child, store_signal):
                 f"Hash: {target.get('hash','N/A')}\n"
                 f"Status: {target.get('status','')}"
             )
-            state_json = json.dumps(
-                target.get("state_info", {}), indent=2, ensure_ascii=False
-            )
+            state_json = json.dumps(target.get("state_info", {}), indent=2, ensure_ascii=False)
 
             children_ids = children_dict.get(str(target["node_id"]), [])
 
@@ -1184,11 +1138,7 @@ def display_node(node_data, show_goal, clicked_child, store_signal):
             path_ids.append("-1")
 
             action_seq = "".join(
-                [
-                    nodes_dict[node_id].get("action", "")
-                    for node_id in path_ids[::-1]
-                    if node_id in nodes_dict
-                ]
+                [nodes_dict[node_id].get("action", "") for node_id in path_ids[::-1] if node_id in nodes_dict]
             )
             state_visual = generate_board_visual(action_seq)
 
@@ -1207,20 +1157,9 @@ def display_node(node_data, show_goal, clicked_child, store_signal):
                         subtree_edge_ids.append(f"e{curr_node}_{child}")
                         queue.append(child)
 
-            path_scores = [
-                nodes_dict[node_id]["score"]
-                for node_id in path_ids
-                if node_id in nodes_dict
-            ]
-            path_turns = [
-                nodes_dict[node_id]["turn"]
-                for node_id in path_ids
-                if node_id in nodes_dict
-            ]
-            path_thresholds = [
-                snapshots_dict[t]["threshold"] if t in snapshots_dict else None
-                for t in path_turns
-            ]
+            path_scores = [nodes_dict[node_id]["score"] for node_id in path_ids if node_id in nodes_dict]
+            path_turns = [nodes_dict[node_id]["turn"] for node_id in path_ids if node_id in nodes_dict]
+            path_thresholds = [snapshots_dict[t]["threshold"] if t in snapshots_dict else None for t in path_turns]
 
             if path_turns:
                 fig.add_trace(
@@ -1239,9 +1178,7 @@ def display_node(node_data, show_goal, clicked_child, store_signal):
                 if th is not None and isinstance(th, (int, float)) and th < inf_value
             ]
             val_th_y = [
-                th
-                for th in path_thresholds[::-1]
-                if th is not None and isinstance(th, (int, float)) and th < inf_value
+                th for th in path_thresholds[::-1] if th is not None and isinstance(th, (int, float)) and th < inf_value
             ]
             if val_th_x:
                 fig.add_trace(
@@ -1268,18 +1205,14 @@ def display_node(node_data, show_goal, clicked_child, store_signal):
             if subtree_node_ids:
                 new_styles.append(
                     {
-                        "selector": ",".join(
-                            [f'node[id="{node_id}"]' for node_id in subtree_node_ids]
-                        ),
+                        "selector": ",".join([f'node[id="{node_id}"]' for node_id in subtree_node_ids]),
                         "style": {"border-width": "3px", "border-color": "#ff9800"},
                     }
                 )
             if subtree_edge_ids:
                 new_styles.append(
                     {
-                        "selector": ",".join(
-                            [f'edge[id="{edge_id}"]' for edge_id in subtree_edge_ids]
-                        ),
+                        "selector": ",".join([f'edge[id="{edge_id}"]' for edge_id in subtree_edge_ids]),
                         "style": {
                             "width": 3,
                             "line-color": "#ff9800",
@@ -1290,9 +1223,7 @@ def display_node(node_data, show_goal, clicked_child, store_signal):
             if path_ids:
                 new_styles.append(
                     {
-                        "selector": ",".join(
-                            [f'node[id="{node_id}"]' for node_id in path_ids]
-                        ),
+                        "selector": ",".join([f'node[id="{node_id}"]' for node_id in path_ids]),
                         "style": {
                             "border-width": "3px",
                             "border-color": DARK_THEME["highlight"],
@@ -1300,15 +1231,11 @@ def display_node(node_data, show_goal, clicked_child, store_signal):
                     }
                 )
 
-            path_edges_ids = [
-                f"e{path_ids[i+1]}_{path_ids[i]}" for i in range(len(path_ids) - 1)
-            ]
+            path_edges_ids = [f"e{path_ids[i+1]}_{path_ids[i]}" for i in range(len(path_ids) - 1)]
             if path_edges_ids:
                 new_styles.append(
                     {
-                        "selector": ",".join(
-                            [f'edge[id="{edge_id}"]' for edge_id in path_edges_ids]
-                        ),
+                        "selector": ",".join([f'edge[id="{edge_id}"]' for edge_id in path_edges_ids]),
                         "style": {
                             "width": 4,
                             "line-color": DARK_THEME["highlight"],
@@ -1336,9 +1263,7 @@ def display_node(node_data, show_goal, clicked_child, store_signal):
                 )
 
     if show_goal:
-        goal_nodes = [
-            node for node in nodes_dict.values() if node.get("is_answer", False)
-        ]
+        goal_nodes = [node for node in nodes_dict.values() if node.get("is_answer", False)]
         goal_path_ids = set()
         goal_edge_ids = set()
 
@@ -1355,9 +1280,7 @@ def display_node(node_data, show_goal, clicked_child, store_signal):
         if goal_path_ids:
             new_styles.append(
                 {
-                    "selector": ",".join(
-                        [f'node[id="{node_id}"]' for node_id in goal_path_ids]
-                    ),
+                    "selector": ",".join([f'node[id="{node_id}"]' for node_id in goal_path_ids]),
                     "style": {
                         "border-width": "5px",
                         "border-color": "#00e5ff",
@@ -1367,9 +1290,7 @@ def display_node(node_data, show_goal, clicked_child, store_signal):
         if goal_edge_ids:
             new_styles.append(
                 {
-                    "selector": ",".join(
-                        [f'edge[id="{edge_id}"]' for edge_id in goal_edge_ids]
-                    ),
+                    "selector": ",".join([f'edge[id="{edge_id}"]' for edge_id in goal_edge_ids]),
                     "style": {
                         "width": 6,
                         "line-color": "#00e5ff",
@@ -1393,17 +1314,13 @@ def display_node(node_data, show_goal, clicked_child, store_signal):
 def manage_folding(n_fold, n_fold_all, tap_data, collapsed):
     trigger = callback_context.triggered[0]["prop_id"]
     if "fold-all-pruned-button" in trigger:
-        nodes = (
-            _DATA_CACHE.get("processed", {}).get("current_data", {}).get("nodes", [])
-        )
+        nodes = _DATA_CACHE.get("processed", {}).get("current_data", {}).get("nodes", [])
         pruned_ids = [str(n["node_id"]) for n in nodes if n["status"] == 1]
         active_collapsed = [c for c in collapsed if c in pruned_ids]
         if active_collapsed:
             collapsed = [c for c in collapsed if c not in pruned_ids]
         else:
-            collapsed.extend(
-                [node_id for node_id in pruned_ids if node_id not in collapsed]
-            )
+            collapsed.extend([node_id for node_id in pruned_ids if node_id not in collapsed])
     elif "toggle-fold-button" in trigger and tap_data and tap_data.get("id") != "-1":
         node_id = tap_data["id"]
         if node_id in collapsed:
@@ -1466,11 +1383,7 @@ def manage_bookmarks(n_clicks, tap_data, bookmarks):
 
     return (
         bookmarks,
-        (
-            elements
-            if elements
-            else html.Div("ブックマークはありません", style={"color": "#aaa"})
-        ),
+        (elements if elements else html.Div("ブックマークはありません", style={"color": "#aaa"})),
         btn_label,
     )
 
@@ -1480,9 +1393,7 @@ def manage_bookmarks(n_clicks, tap_data, bookmarks):
     Input("cytoscape-tree", "mouseoverEdgeData"),
 )
 def display_hover_edge(edge_data):
-    return (
-        f"Action: {edge_data['action']}" if edge_data and "action" in edge_data else ""
-    )
+    return f"Action: {edge_data['action']}" if edge_data and "action" in edge_data else ""
 
 
 @app.callback(

@@ -56,9 +56,7 @@ def _find_component(component, component_id: str):
 
 class CallbackContextTest(unittest.TestCase):
     def test_triggered_property_id(self) -> None:
-        callback_context = SimpleNamespace(
-            triggered_prop_ids={"timestamp-table.cellClicked": "timestamp-table"}
-        )
+        callback_context = SimpleNamespace(triggered_prop_ids={"timestamp-table.cellClicked": "timestamp-table"})
         with patch.object(vis_callbacks, "ctx", callback_context):
             self.assertEqual(
                 vis_callbacks._triggered_property_id(),
@@ -253,11 +251,7 @@ class ResultStoreTest(unittest.TestCase):
                 first_input.write_text("-10\n", encoding="utf-8")
                 updated = store.snapshot()
                 self.assertEqual(ahc_settings.CALLS, 3)
-                self.assertTrue(
-                    any(
-                        "parse_input_params の失敗" in item for item in updated.warnings
-                    )
-                )
+                self.assertTrue(any("parse_input_params の失敗" in item for item in updated.warnings))
             finally:
                 os.chdir(previous_cwd)
                 sys.path[:] = previous_sys_path
@@ -437,9 +431,7 @@ class TableDataTest(unittest.TestCase):
         self.assertEqual(by_id["in/b.txt"]["__parameter_1"], "large")
 
         specs = parameter_column_specs(metadata)
-        columns = {
-            column["field"]: column for column in case_column_defs("minimize", specs)
-        }
+        columns = {column["field"]: column for column in case_column_defs("minimize", specs)}
         self.assertIn("base_rank", columns)
         self.assertIn("base_time", columns)
         self.assertEqual(columns["__parameter_0"]["filter"], "agNumberColumnFilter")
@@ -583,9 +575,7 @@ class DetailContentTest(unittest.TestCase):
             output_path.parent.mkdir()
             output_path.write_text("answer", encoding="utf-8")
             visualizer_path = project_path / "visualizer.html"
-            visualizer_path.write_text(
-                "<html><body>vis</body></html>", encoding="utf-8"
-            )
+            visualizer_path.write_text("<html><body>vis</body></html>", encoding="utf-8")
 
             previous_cwd = os.getcwd()
             try:
@@ -597,17 +587,13 @@ class DetailContentTest(unittest.TestCase):
                 app = Dash(__name__)
                 app.layout = html.Div()
                 _register_visualizer_route(app, store)
-                response = app.server.test_client().get(
-                    "/_ahclib_visualizer?timestamp=run-1&case_id=in%2Fa.txt"
-                )
+                response = app.server.test_client().get("/_ahclib_visualizer?timestamp=run-1&case_id=in%2Fa.txt")
             finally:
                 os.chdir(previous_cwd)
 
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.headers["Cache-Control"], "no-store")
-            self.assertIn(
-                "default-src 'none'", response.headers["Content-Security-Policy"]
-            )
+            self.assertIn("default-src 'none'", response.headers["Content-Security-Policy"])
             self.assertNotIn(b"</script> input", response.data)
             self.assertIn(b"answer", response.data)
 
